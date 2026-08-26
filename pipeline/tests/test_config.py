@@ -5,10 +5,10 @@ def make_settings() -> Settings:
     return Settings(aisstream_api_key="test-key", _env_file=None)
 
 
-def test_launch_bbox_covers_black_sea_and_marmara() -> None:
+def test_launch_bbox_covers_north_sea_and_channel() -> None:
     box = LAUNCH_BBOX
-    assert box.lat_sw < 40.3 and box.lat_ne > 47.0  # Marmara south to Azov north
-    assert box.lon_sw < 26.5 and box.lon_ne > 41.5  # Aegean mouth to Caucasus coast
+    assert box.lat_sw < 49.5 and box.lat_ne > 61.0  # Channel mouth to north of the Skaw
+    assert box.lon_sw < -5.0 and box.lon_ne > 12.0  # Western Approaches to the Kattegat
     assert box.lat_sw < box.lat_ne and box.lon_sw < box.lon_ne
 
 

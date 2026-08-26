@@ -16,8 +16,9 @@ class BBox(BaseModel):
         return [[self.lat_sw, self.lon_sw], [self.lat_ne, self.lon_ne]]
 
 
-# Launch region: Black Sea + Bosphorus + Sea of Marmara (one box, per MVP spec).
-LAUNCH_BBOX = BBox(lat_sw=40.2, lon_sw=26.0, lat_ne=47.4, lon_ne=42.0)
+# Launch region: North Sea + English Channel (one box, per MVP spec §00).
+# Western Approaches to the Skaw: Brest..Dover..Rotterdam..Hamburg..Kattegat.
+LAUNCH_BBOX = BBox(lat_sw=49.0, lon_sw=-6.5, lat_ne=61.5, lon_ne=13.0)
 
 
 class Settings(BaseSettings):

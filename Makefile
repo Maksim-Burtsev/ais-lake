@@ -1,7 +1,7 @@
 # ais-lake — one box, two services, three stores.
 # Targets grow per milestone.
 
-.PHONY: dev down nuke test seed e2e
+.PHONY: dev down nuke migrate test seed e2e
 
 dev:
 	docker compose up -d --wait
@@ -12,6 +12,10 @@ down:
 
 nuke:
 	docker compose down -v --remove-orphans
+
+migrate:
+	cd pipeline && CLICKHOUSE_MIGRATE_URL=clickhouse://ais:ais-dev@localhost:9000/ais \
+		uv run migrator --path db/migrations up
 
 test:
 	cd pipeline && uv run ruff check . && uv run mypy ais_pipeline && uv run pytest -q

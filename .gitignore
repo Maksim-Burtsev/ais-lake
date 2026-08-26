@@ -1,0 +1,27 @@
+# --- private build kit: never published (open-source repo ships source only) ---
+CLAUDE.md
+docs/
+prompts/
+templates/
+README.kit.md
+
+# --- secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- runtime/junk ---
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+dist/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+playwright-report/
+test-results/
+ops/seed/

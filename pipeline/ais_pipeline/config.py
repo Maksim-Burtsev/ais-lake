@@ -33,6 +33,29 @@ class Settings(BaseSettings):
     raw_topic_partitions: int = 1
     raw_retention_ms: int = 24 * 60 * 60 * 1000  # 24h — everything after the bus is replayable
 
+    # --- refinery ---
+    region_slug: str = "north-sea"
+    refinery_group_id: str = "refinery"
+
+    # validation thresholds — never inline these in code
+    mmsi_min: int = 200_000_000
+    mmsi_max: int = 799_999_999
+    teleport_max_kn: float = 100.0
+
+    dedup_ttl_s: float = 60.0
+    dedup_max_keys: int = 500_000
+
+    flush_interval_s: float = 2.0
+    flush_max_rows: int = 50_000
+
+    redis_url: str = "redis://localhost:6379/0"
+
+    clickhouse_host: str = "localhost"
+    clickhouse_port: int = 8123
+    clickhouse_user: str = "ais"
+    clickhouse_password: str = "ais-dev"
+    clickhouse_database: str = "ais"
+
     metrics_interval_s: float = 10.0
     backoff_base_s: float = 1.0
     backoff_cap_s: float = 60.0

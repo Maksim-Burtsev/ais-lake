@@ -13,6 +13,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  refinery:
+    build: ./pipeline
+    command: ["uv", "run", "--no-sync", "python", "-m", "ais_pipeline.refinery"]
+    env_file: .env
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+      REDIS_URL: redis://redis:6379/0
+      CLICKHOUSE_HOST: clickhouse
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   api:
     build: ./api
     environment:

@@ -15,6 +15,7 @@ nuke:
 
 test:
 	cd pipeline && uv run ruff check . && uv run mypy ais_pipeline && uv run pytest -q
+	cd api && uv run ruff check . && uv run mypy app && uv run pytest -q
 
 seed:
 	@echo "make seed: offline seed arrives with M1-T3"

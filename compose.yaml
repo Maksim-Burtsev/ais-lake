@@ -1,5 +1,4 @@
-# ais-lake — dev backbone: the bus and the three stores.
-# App services (pipeline, api, web) are added by later milestones.
+# ais-lake — dev: the bus, the three stores, and the app services.
 
 name: ais-lake
 
@@ -9,6 +8,17 @@ services:
     env_file: .env
     environment:
       KAFKA_BOOTSTRAP: redpanda:9092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build: ./api
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+    ports:
+      - "8000:8000"
     depends_on:
       redpanda:
         condition: service_healthy

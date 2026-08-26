@@ -1,16 +1,17 @@
 # ais-lake — one box, two services, three stores.
-# Real targets land with M0-T1 (compose) and grow per milestone.
+# Targets grow per milestone.
 
 .PHONY: dev down nuke test seed e2e
 
 dev:
-	@echo "make dev: compose.yaml arrives with task M0-T1"
+	docker compose up -d --wait
+	docker compose logs -f
 
 down:
-	@echo "make down: compose.yaml arrives with task M0-T1"
+	docker compose down
 
 nuke:
-	@echo "make nuke: compose.yaml arrives with task M0-T1"
+	docker compose down -v --remove-orphans
 
 test:
 	@echo "make test: test suites arrive with M0-T2"

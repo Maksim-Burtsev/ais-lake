@@ -1,22 +1,77 @@
-"""M0 steel thread: bare /debug page listing live ships as text. No design."""
+"""The api process: the M0 /debug eyeball and /status.json.
+
+Environment names match the pipeline's Settings on purpose (CLICKHOUSE_HOST,
+REDIS_URL, …) — one box, one set of names.
+"""
 
 import asyncio
+import logging
 import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import clickhouse_connect
+import redis.asyncio as redis
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from .consumer import LatestShips, consume_forever
+from .status import build_status
+
+logger = logging.getLogger("api")
 
 ships = LatestShips()
 
 
+class Runtime:
+    """Process-wide handles. Missing stores stay None; /status.json copes."""
+
+    def __init__(self) -> None:
+        self.started_at = time.monotonic()
+        self.clickhouse: Any = None
+        self.redis: redis.Redis | None = None
+
+    @property
+    def uptime_s(self) -> float:
+        return time.monotonic() - self.started_at
+
+
+runtime = Runtime()
+
+
+async def open_clickhouse() -> Any:
+    try:
+        return await clickhouse_connect.get_async_client(
+            host=os.environ.get("CLICKHOUSE_HOST", "localhost"),
+            port=int(os.environ.get("CLICKHOUSE_PORT", "8123")),
+            username=os.environ.get("CLICKHOUSE_USER", "ais"),
+            password=os.environ.get("CLICKHOUSE_PASSWORD", "ais-dev"),
+            database=os.environ.get("CLICKHOUSE_DATABASE", "ais"),
+        )
+    except Exception as exc:
+        logger.warning("clickhouse unavailable: %s: %s", type(exc).__name__, exc)
+        return None
+
+
+async def open_redis() -> redis.Redis | None:
+    try:
+        client = redis.from_url(
+            os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+        )
+        await client.ping()
+    except Exception as exc:
+        logger.warning("redis unavailable: %s: %s", type(exc).__name__, exc)
+        return None
+    return client
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    runtime.started_at = time.monotonic()
+    runtime.clickhouse = await open_clickhouse()
+    runtime.redis = await open_redis()
     task = asyncio.create_task(
         consume_forever(
             ships,
@@ -26,9 +81,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     yield
     task.cancel()
+    if runtime.redis is not None:
+        await runtime.redis.aclose()
+    if runtime.clickhouse is not None:
+        await runtime.clickhouse.close()
 
 
 app = FastAPI(title="ais-lake api", lifespan=lifespan)
+
+
+@app.get("/status.json")
+async def status_json() -> dict[str, Any]:
+    """The honest numbers. Never 500s — an unreachable store becomes a null."""
+    return await build_status(runtime.clickhouse, runtime.redis, runtime.uptime_s)
 
 
 @app.get("/debug/ships")

@@ -9,7 +9,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -17,10 +17,11 @@ from typing import Protocol
 from aiokafka import AIOKafkaConsumer
 
 from ..config import LAUNCH_BBOX, Settings
+from ..incidents import IncidentSink, record_incident
 from ..log import kv, setup
 from .clickhouse import ClickHouseWriter
 from .dedup import Dedup
-from .models import LatestRow, PositionRow, StaticRow
+from .models import LatestRow, Parsed, PositionRow, StaticRow
 from .parser import NotAVesselMessage, parse
 from .redis_sink import RedisSink
 from .state import LatestStore
@@ -37,6 +38,10 @@ class LakeSink(Protocol):
 
 class LiveSink(Protocol):
     async def publish(self, rows: list[LatestRow]) -> None: ...
+
+
+class StatusSink(Protocol):
+    async def set_status(self, fields: Mapping[str, object]) -> None: ...
 
 
 @dataclass
@@ -89,13 +94,17 @@ class Refinery:
         return len(self.positions)
 
     def handle(self, raw: bytes | str, recv_ts: datetime) -> None:
+        """One raw message: parse it, then run it through the pipeline."""
         self.counters.in_ += 1
         try:
             parsed = parse(raw, recv_ts)
         except NotAVesselMessage:
             self.counters.skipped_nonvessel += 1
             return
+        self.handle_parsed(parsed)
 
+    def handle_parsed(self, parsed: Parsed) -> None:
+        """Validate, dedup and buffer already-parsed rows — the seed's entry point too."""
         row = parsed.position
         if row is None:  # pragma: no cover — parse() always yields a position today
             self.counters.skipped_nonvessel += 1
@@ -134,21 +143,39 @@ class Refinery:
 
 
 async def flush_forever(
-    refinery: Refinery, lake: LakeSink, live: LiveSink, interval_s: float
+    refinery: Refinery,
+    lake: LakeSink,
+    live: LiveSink,
+    interval_s: float,
+    incidents: IncidentSink | None = None,
 ) -> None:
     while True:
         await asyncio.sleep(interval_s)
         try:
             await refinery.flush(lake, live)
         except Exception as exc:  # a bad batch must not take the service down
-            logger.warning(kv("flush_failed", reason=type(exc).__name__, detail=str(exc)[:200]))
+            reason, detail = type(exc).__name__, str(exc)[:200]
+            logger.warning(kv("flush_failed", reason=reason, detail=detail))
+            await record_incident(incidents, "flush_failed", reason=reason, detail=detail)
 
 
-async def report_forever(refinery: Refinery, interval_s: float) -> None:
+async def report_forever(
+    refinery: Refinery,
+    interval_s: float,
+    status: StatusSink | None = None,
+) -> None:
     while True:
         await asyncio.sleep(interval_s)
-        logger.info(kv("refinery_counters", window_s=interval_s, tracked=len(refinery.latest),
-                       **refinery.counters.as_fields()))
+        fields = refinery.counters.as_fields()
+        tracked = len(refinery.latest)
+        logger.info(kv("refinery_counters", window_s=interval_s, tracked=tracked, **fields))
+        if status is not None:
+            try:
+                await status.set_status(
+                    {**fields, "tracked": tracked, "window_s": interval_s, "ts": int(time.time())}
+                )
+            except Exception as exc:  # the counters are a nicety, never a reason to die
+                logger.debug("status not published: %s: %s", type(exc).__name__, exc)
         refinery.counters.reset()
 
 
@@ -191,8 +218,12 @@ async def run(settings: Settings) -> None:
     logger.info(kv("refinery_start", topic=settings.raw_topic, group=settings.refinery_group_id,
                    region=settings.region_slug, clickhouse=settings.clickhouse_host))
 
-    flusher = asyncio.create_task(flush_forever(refinery, lake, live, settings.flush_interval_s))
-    reporter = asyncio.create_task(report_forever(refinery, settings.metrics_interval_s))
+    flusher = asyncio.create_task(
+        flush_forever(refinery, lake, live, settings.flush_interval_s, live.client)
+    )
+    reporter = asyncio.create_task(
+        report_forever(refinery, settings.metrics_interval_s, live)
+    )
     try:
         await consume(consumer, refinery, lake, live, settings.flush_max_rows)
     finally:

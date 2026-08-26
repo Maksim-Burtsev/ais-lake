@@ -21,8 +21,11 @@ test:
 	cd pipeline && uv run ruff check . && uv run mypy ais_pipeline && uv run pytest -q
 	cd api && uv run ruff check . && uv run mypy app && uv run pytest -q
 
+# Offline seed: DMA daily dumps -> the same refinery -> ClickHouse + Redis.
+# Zips are cached under ops/seed/cache; SEED_DAYS / SEED_STRIDE tune the volume.
 seed:
-	@echo "make seed: offline seed arrives with M1-T3"
+	cd pipeline && CLICKHOUSE_HOST=localhost REDIS_URL=redis://localhost:6379/0 \
+		uv run python -m ais_pipeline.seed
 
 e2e:
 	@echo "make e2e: Playwright smoke arrives with M2"

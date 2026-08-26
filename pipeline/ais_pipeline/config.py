@@ -1,7 +1,13 @@
 """Pipeline configuration. Limits and regions live here, never hardcoded in code."""
 
+from pathlib import Path
+
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The package lives at <pipeline>/ais_pipeline/, so this is the `pipeline/` dir.
+# Relative paths in Settings are resolved against it, whatever the cwd.
+PIPELINE_ROOT = Path(__file__).resolve().parent.parent
 
 
 class BBox(BaseModel):
@@ -56,11 +62,23 @@ class Settings(BaseSettings):
     clickhouse_password: str = "ais-dev"
     clickhouse_database: str = "ais"
 
+    # --- offline seed (Danish Maritime Authority daily dumps) ---
+    seed_base_url: str = "http://aisdata.ais.dk"
+    seed_days: int = 7
+    seed_lookback_extra_days: int = 7  # scan this far past seed_days for published dumps
+    seed_stride: int = 1        # keep every Nth CSV row (1 = all of them)
+    seed_cache_dir: str = "../ops/seed/cache"  # relative paths resolve against PIPELINE_ROOT
+
     metrics_interval_s: float = 10.0
     backoff_base_s: float = 1.0
     backoff_cap_s: float = 60.0
     # a connection alive longer than this is "stable" — backoff resets
     stable_connection_s: float = 30.0
+
+    def seed_cache_path(self) -> Path:
+        """seed_cache_dir as an absolute path — relative values hang off PIPELINE_ROOT."""
+        path = Path(self.seed_cache_dir).expanduser()
+        return path if path.is_absolute() else (PIPELINE_ROOT / path).resolve()
 
 
 def subscribe_message(settings: Settings, bbox: BBox = LAUNCH_BBOX) -> dict[str, object]:

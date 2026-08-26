@@ -14,7 +14,7 @@ nuke:
 	docker compose down -v --remove-orphans
 
 test:
-	@echo "make test: test suites arrive with M0-T2"
+	cd pipeline && uv run ruff check . && uv run mypy ais_pipeline && uv run pytest -q
 
 seed:
 	@echo "make seed: offline seed arrives with M1-T3"

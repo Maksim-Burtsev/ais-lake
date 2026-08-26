@@ -4,6 +4,16 @@
 name: ais-lake
 
 services:
+  pipeline:
+    build: ./pipeline
+    env_file: .env
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
   redpanda:
     image: redpandadata/redpanda:v24.3.5
     command:

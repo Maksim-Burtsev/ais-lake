@@ -1,0 +1,80 @@
+@import 'tailwindcss';
+@import '../theme/tokens.css';
+
+/* Tailwind v4 theme bridge.
+ * Only *semantic* names live here, and each one points at a token var that is
+ * redefined per data-theme, so `bg-panel` / `text-ink` swap with the theme with
+ * no dark: variants anywhere. Raw colours must never appear in components —
+ * if a utility is missing, add the mapping here, not a hex in JSX. */
+@theme inline {
+  --color-page: var(--page);
+  --color-panel: var(--panel);
+  --color-panel-solid: var(--panel-solid);
+  --color-border-token: var(--border);
+  --color-hairline: var(--chrome-hairline);
+  --color-hairline-strong: var(--chrome-hairline-strong);
+  --color-ink: var(--text);
+  --color-ink-soft: var(--text-soft, var(--text));
+  --color-ink-mute: var(--text-mute);
+  --color-ink-faint: var(--text-faint);
+  --color-gold: var(--gold);
+  --color-signal: var(--signal);
+  --color-sea-deep: var(--sea-deep);
+
+  --font-display: var(--font-display-stack);
+  --font-ui: var(--font-ui-stack);
+  --font-mono: var(--font-mono-stack);
+}
+
+/* Fallback stacks. The tokens carry the intended faces; these add the local
+ * substitutes so the shell is legible before the webfonts land. */
+:root {
+  --font-display-stack: Fraunces, 'Iowan Old Style', Georgia, serif;
+  --font-ui-stack: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono-stack: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text);
+  font-family: var(--font-ui-stack);
+  font-size: var(--text-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* motion.allowed in tokens.json: silent-pulse 2.4s, selection-halo 3s,
+ * row-enter 120ms — plus the two chrome loops the frames run in the top bar. */
+@keyframes live-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes live-sweep {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

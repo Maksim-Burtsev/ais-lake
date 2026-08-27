@@ -1,11 +1,15 @@
 # ais-lake — one box, two services, three stores.
 # Targets grow per milestone.
 
-.PHONY: dev down nuke migrate test seed e2e
+.PHONY: dev dev-web down nuke migrate test seed e2e
 
 dev:
 	docker compose up -d --wait
 	docker compose logs -f
+
+# Vite dev server for the web shell (npm ci once: cd web && npm install).
+dev-web:
+	cd web && npm run dev
 
 down:
 	docker compose down
@@ -20,6 +24,7 @@ migrate:
 test:
 	cd pipeline && uv run ruff check . && uv run mypy ais_pipeline && uv run pytest -q
 	cd api && uv run ruff check . && uv run mypy app && uv run pytest -q
+	cd web && (test -d node_modules || npm ci) && npm run check
 
 # Offline seed: DMA daily dumps -> the same refinery -> ClickHouse + Redis.
 # Zips are cached under ops/seed/cache; SEED_DAYS / SEED_STRIDE tune the volume.

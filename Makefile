@@ -33,4 +33,4 @@ seed:
 		uv run python -m ais_pipeline.seed
 
 e2e:
-	@echo "make e2e: Playwright smoke arrives with M2"
+	cd web && npx playwright test

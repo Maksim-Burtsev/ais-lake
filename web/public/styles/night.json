@@ -1,0 +1,85 @@
+{
+  "$comment": "Night basemap. Every colour is verbatim from docs/design/tokens.json color.night — change tokens.json (and the frames behind it) first, never this file alone. OpenMapTiles schema on OpenFreeMap's hosted planet.",
+  "version": 8,
+  "name": "ais-lake night",
+  "glyphs": "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
+  "sources": {
+    "openmaptiles": {
+      "type": "vector",
+      "url": "https://tiles.openfreemap.org/planet"
+    }
+  },
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": { "background-color": "#15242C" }
+    },
+    {
+      "id": "landcover",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "landcover",
+      "paint": { "fill-color": "#20353F", "fill-opacity": 0.6 }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "water",
+      "paint": { "fill-color": "#0A2444" }
+    },
+    {
+      "id": "coastline",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "water",
+      "paint": { "line-color": "#6FC6DE", "line-width": 0.6, "line-opacity": 0.55 }
+    },
+    {
+      "id": "waterway",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "waterway",
+      "paint": { "line-color": "#255579", "line-width": 0.8 }
+    },
+    {
+      "id": "boundary-country",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "filter": ["<=", "admin_level", 2],
+      "paint": { "line-color": "#3E6675", "line-width": 0.8, "line-dasharray": [3, 2] }
+    },
+    {
+      "id": "place-country",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "filter": ["==", "class", "country"],
+      "maxzoom": 8,
+      "layout": {
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 12,
+        "text-letter-spacing": 0.12,
+        "text-transform": "uppercase"
+      },
+      "paint": { "text-color": "#9DB4C2", "text-halo-color": "#0A1620", "text-halo-width": 1.2 }
+    },
+    {
+      "id": "place-city",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "filter": ["in", "class", "city", "town"],
+      "minzoom": 5,
+      "layout": {
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 11
+      },
+      "paint": { "text-color": "#CFE0E8", "text-halo-color": "#0A1620", "text-halo-width": 1.2 }
+    }
+  ]
+}

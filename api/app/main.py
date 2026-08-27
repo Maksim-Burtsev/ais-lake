@@ -14,10 +14,11 @@ from typing import Any
 
 import clickhouse_connect
 import redis.asyncio as redis
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
 from .consumer import LatestShips, consume_forever
+from .map import SnapshotUnavailable, parse_bbox, snapshot_payload
 from .status import build_status
 
 logger = logging.getLogger("api")
@@ -94,6 +95,20 @@ app = FastAPI(title="ais-lake api", lifespan=lifespan)
 async def status_json() -> dict[str, Any]:
     """The honest numbers. Never 500s — an unreachable store becomes a null."""
     return await build_status(runtime.clickhouse, runtime.redis, runtime.uptime_s)
+
+
+@app.get("/v1/map/snapshot")
+async def map_snapshot(bbox: str | None = None, zoom: float | None = None) -> dict[str, Any]:
+    """Every vessel the refinery currently knows, culled to bbox. `zoom` is
+    accepted so the client can send it, and ignored until LOD lands server-side."""
+    try:
+        box = parse_bbox(bbox) if bbox else None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    try:
+        return await snapshot_payload(runtime.redis, box)
+    except SnapshotUnavailable as exc:
+        raise HTTPException(503, "live snapshot unavailable") from exc
 
 
 @app.get("/debug/ships")

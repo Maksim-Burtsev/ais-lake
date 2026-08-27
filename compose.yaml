@@ -35,10 +35,15 @@ services:
 
   api:
     build: ./api
-    environment:
+    env_file: .env          # REGION_SLUG above all: the gateway must subscribe to
+    environment:            # the same live:{region} the refinery publishes to
       KAFKA_BOOTSTRAP: redpanda:9092
       REDIS_URL: redis://redis:6379/0
       CLICKHOUSE_HOST: clickhouse
+      REGION_SLUG: ${REGION_SLUG:-north-sea}   # same default as pipeline Settings
+      LIMITS_PATH: /limits.json
+    volumes:
+      - ./limits.json:/limits.json:ro   # the root file is outside the ./api build context
     ports:
       - "8000:8000"
     depends_on:

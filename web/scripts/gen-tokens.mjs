@@ -7,6 +7,10 @@
  * copy to "fix" a colour: change the approved frames first, then tokens.json,
  * then re-copy. Regenerate with `npm run tokens` (dev/build/check do it for you).
  *
+ * Also copies the repo-root limits.json to web/src/limits.json, same reason and
+ * same rule: the limits table (F27) has ONE source of truth and the UI reads a
+ * copy of it, never its own numbers.
+ *
  * Output: web/src/theme/tokens.css — GENERATED, do not edit.
  *   :root[data-theme="night"] { --panel: ...; }
  *   :root[data-theme="day"]   { --panel: ...; }
@@ -19,13 +23,15 @@
  * tokens.json grows these values, delete them here.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(here, '../src/theme/tokens.json');
 const OUT = resolve(here, '../src/theme/tokens.css');
+const LIMITS_SRC = resolve(here, '../../limits.json');
+const LIMITS_OUT = resolve(here, '../src/limits.json');
 
 /**
  * Frame-only chrome values — measured from
@@ -147,3 +153,6 @@ const css = [
 
 writeFileSync(OUT, css);
 console.log(`tokens -> ${OUT}`);
+
+copyFileSync(LIMITS_SRC, LIMITS_OUT);
+console.log(`limits -> ${LIMITS_OUT}`);

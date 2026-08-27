@@ -1,0 +1,8 @@
+{
+  "$comment": "Every limit the product enforces, in ONE file (F27). The api reads it directly; web/src/limits.json is a verbatim copy made by web/scripts/gen-tokens.mjs, so the UI can never quote a number the server does not enforce. Source: docs/01-mvp-spec.html §03 'Limits at launch'.",
+  "map_refresh_s": {
+    "options": [5, 10, 30],
+    "default": 10,
+    "floor": { "anon": 10, "free": 5 }
+  }
+}

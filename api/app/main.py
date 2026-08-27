@@ -14,16 +14,19 @@ from typing import Any
 
 import clickhouse_connect
 import redis.asyncio as redis
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.responses import HTMLResponse
 
 from .consumer import LatestShips, consume_forever
+from .limits import clamp_interval
+from .live import Deltas, live_socket, subscribe_forever
 from .map import SnapshotUnavailable, parse_bbox, snapshot_payload
 from .status import build_status
 
 logger = logging.getLogger("api")
 
 ships = LatestShips()
+deltas = Deltas()
 
 
 class Runtime:
@@ -80,7 +83,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             topic=os.environ.get("RAW_TOPIC", "ais.raw"),
         )
     )
+    # One subscriber for the whole process; every /v1/live socket reads from it.
+    live_task = asyncio.create_task(subscribe_forever(deltas, runtime.redis))
     yield
+    live_task.cancel()
     task.cancel()
     if runtime.redis is not None:
         await runtime.redis.aclose()
@@ -109,6 +115,25 @@ async def map_snapshot(bbox: str | None = None, zoom: float | None = None) -> di
         return await snapshot_payload(runtime.redis, box)
     except SnapshotUnavailable as exc:
         raise HTTPException(503, "live snapshot unavailable") from exc
+
+
+@app.websocket("/v1/live")
+async def live_feed(ws: WebSocket, bbox: str | None = None, interval: int | None = None) -> None:
+    """F1/F29: delta frames on the client's own cadence. A junk bbox is refused
+    here (1008) — the client has one to send; a junk bbox in a later command is
+    answered on the open socket instead."""
+    try:
+        box = parse_bbox(bbox) if bbox else None
+    except ValueError as exc:
+        await ws.close(1008, str(exc))
+        return
+    await live_socket(
+        ws,
+        deltas,
+        available=runtime.redis is not None,
+        bbox=box,
+        interval=clamp_interval(interval),
+    )
 
 
 @app.get("/debug/ships")

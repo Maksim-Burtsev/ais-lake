@@ -4,7 +4,8 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  server: { port: 5173, proxy: { '/v1': 'http://localhost:8000' } },
+  // ws: /v1/live is a WebSocket; without it the proxy answers the upgrade with a 404.
+  server: { port: 5173, proxy: { '/v1': { target: 'http://localhost:8000', ws: true } } },
   // maplibre ships its own web worker; the dep optimizer mangles it in dev.
   optimizeDeps: { exclude: ['maplibre-gl'] },
 });

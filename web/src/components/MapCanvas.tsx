@@ -10,10 +10,11 @@ import * as maplibregl from 'maplibre-gl';
 // Vite must bundle the worker itself: served raw in dev it gets the @vite/client
 // inject, which touches `document` and kills the worker (map never fires `load`).
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
-import type { FeatureCollection } from 'geojson';
+import type { Feature, FeatureCollection, Point } from 'geojson';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 maplibregl.setWorkerUrl(workerUrl);
+import { startLive, type Vessel } from '../state/live';
 import { useUrlStore, type Center } from '../state/url';
 
 /** North Sea + English Channel, the launch region (docs/design/FRAMES.md). */
@@ -65,26 +66,26 @@ function lozenge(): ImageData {
   return ctx.getImageData(0, 0, SPRITE_PX, SPRITE_PX);
 }
 
-interface Snapshot {
-  vessels: [number, number, number, number, number, string][];
+type VesselFeature = Feature<Point, { mmsi: number; cog: number; state: string }>;
+
+const feature = ([mmsi, lat, lon, cog, , state]: Vessel): VesselFeature => ({
+  type: 'Feature',
+  geometry: { type: 'Point', coordinates: [lon, lat] },
+  properties: { mmsi, cog, state },
+});
+
+/** The current viewport, in the api's bbox order. */
+function bboxOf(map: maplibregl.Map): string {
+  const b = map.getBounds();
+  return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((v) => v.toFixed(4)).join(',');
 }
 
-async function fetchVessels(map: maplibregl.Map): Promise<FeatureCollection> {
-  const b = map.getBounds();
-  const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
-    .map((v) => v.toFixed(4))
-    .join(',');
-  const response = await fetch(`/v1/map/snapshot?bbox=${bbox}&zoom=${map.getZoom().toFixed(2)}`);
+async function fetchVessels(map: maplibregl.Map): Promise<Vessel[]> {
+  const query = `bbox=${bboxOf(map)}&zoom=${map.getZoom().toFixed(2)}`;
+  const response = await fetch(`/v1/map/snapshot?${query}`);
   if (!response.ok) throw new Error(`snapshot ${response.status}`);
-  const { vessels } = (await response.json()) as Snapshot;
-  return {
-    type: 'FeatureCollection',
-    features: vessels.map(([mmsi, lat, lon, cog, , state]) => ({
-      type: 'Feature' as const,
-      geometry: { type: 'Point' as const, coordinates: [lon, lat] },
-      properties: { mmsi, cog, state },
-    })),
-  };
+  const { vessels } = (await response.json()) as { vessels: Vessel[] };
+  return vessels;
 }
 
 /** Sprite + source + layer. Re-run after every setStyle — a style swap wipes all three.
@@ -138,16 +139,35 @@ export function MapCanvas() {
       attributionControl: { compact: true },
     });
 
-    // The snapshot outlives style swaps; the layer is rebuilt from it each time.
-    let vessels: FeatureCollection = { type: 'FeatureCollection', features: [] };
+    // The fleet outlives style swaps; the layer is rebuilt from it each time.
+    // A Map, not a FeatureCollection: GeoJSON sources have no partial update, so
+    // every live delta is merged here by MMSI and the whole collection re-pushed.
+    const fleet = new Map<number, VesselFeature>();
+    const collection = (): FeatureCollection => ({
+      type: 'FeatureCollection',
+      features: [...fleet.values()],
+    });
+    const upsert = (rows: Vessel[]) => {
+      for (const row of rows) fleet.set(row[0], feature(row));
+    };
+
+    // The socket does not wait for the basemap: a slow tile host must not stall
+    // the live feed, and the LIVE dot has to tell the truth from the first second.
+    // setData is optional-chained — before `load` there is no source to push to,
+    // and the layer is built from `collection()` when there is.
+    const stopLive = startLive(
+      () => bboxOf(map),
+      (rows) => {
+        upsert(rows);
+        void map.getSource<maplibregl.GeoJSONSource>(SOURCE)?.setData(collection());
+      },
+    );
 
     map.on('load', () => {
       fetchVessels(map)
-        .then((data) => {
-          vessels = data;
-        })
+        .then(upsert)
         .catch((error: unknown) => console.warn('map: no vessel snapshot —', error))
-        .finally(() => addVesselLayer(map, useUrlStore.getState().theme, vessels));
+        .finally(() => addVesselLayer(map, useUrlStore.getState().theme, collection()));
     });
 
     map.on('moveend', () => {
@@ -160,10 +180,14 @@ export function MapCanvas() {
       if (state.theme === painted) return;
       painted = state.theme;
       map.setStyle(`/styles/${state.theme}.json`);
-      map.once('styledata', () => addVesselLayer(map, state.theme, vessels));
+      map.once('styledata', () => addVesselLayer(map, state.theme, collection()));
     });
 
+    // The e2e spec drives the vessel source through this handle (dev only).
+    if (import.meta.env.DEV) (window as unknown as { __map?: maplibregl.Map }).__map = map;
+
     return () => {
+      stopLive();
       unsubscribe();
       map.remove();
     };

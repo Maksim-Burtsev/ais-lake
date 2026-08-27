@@ -8,6 +8,7 @@
  */
 
 import { create } from 'zustand';
+import limits from '../limits.json';
 import { applyTheme, persistTheme, resolveTheme, type Theme } from './theme';
 
 export type Center = [lon: number, lat: number];
@@ -15,6 +16,8 @@ export type Center = [lon: number, lat: number];
 export interface UrlState {
   theme: Theme;
   region: string;
+  /** Live cadence in seconds (F1). Server-clamped; the selector only offers REFRESH.options. */
+  interval: number;
   zoom?: number;
   center?: Center;
 }
@@ -22,6 +25,10 @@ export interface UrlState {
 /** Launch region. The frames say "Black Sea" — illustrative; launch is the
  *  North Sea + English Channel (docs/design/FRAMES.md). */
 export const DEFAULT_REGION = 'North Sea';
+
+/** The limits table, copied verbatim from the repo-root limits.json (F27).
+ *  Never hardcode a cadence anywhere else — the api enforces these same numbers. */
+export const REFRESH = limits.map_refresh_s;
 
 /** One row per URL-visible field: how it is named, parsed and printed.
  *  `serialize` returning null drops the param (default value = clean URL). */
@@ -49,6 +56,11 @@ export const PARAMS: Params = {
     parse: (raw) => (raw.trim() === '' ? undefined : raw),
     serialize: (value) => (value === DEFAULT_REGION ? null : value),
   },
+  interval: {
+    param: 'r',
+    parse: (raw) => (REFRESH.options.includes(Number(raw)) ? Number(raw) : undefined),
+    serialize: (value) => (value === REFRESH.default ? null : String(value)),
+  },
   zoom: {
     param: 'z',
     parse: num,
@@ -68,7 +80,11 @@ const KEYS = Object.keys(PARAMS) as (keyof UrlState)[];
 
 export function readUrl(search: string, now: Date = new Date()): UrlState {
   const query = new URLSearchParams(search);
-  const state: UrlState = { theme: resolveTheme(search, now), region: DEFAULT_REGION };
+  const state: UrlState = {
+    theme: resolveTheme(search, now),
+    region: DEFAULT_REGION,
+    interval: REFRESH.default,
+  };
   for (const key of KEYS) {
     if (key === 'theme') continue;
     const raw = query.get(PARAMS[key].param);
@@ -100,7 +116,7 @@ interface UrlStore extends UrlState {
 
 const initial: UrlState =
   typeof window === 'undefined'
-    ? { theme: 'night', region: DEFAULT_REGION }
+    ? { theme: 'night', region: DEFAULT_REGION, interval: REFRESH.default }
     : readUrl(window.location.search);
 
 export const useUrlStore = create<UrlStore>((set, get) => ({

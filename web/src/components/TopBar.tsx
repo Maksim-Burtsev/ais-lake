@@ -1,14 +1,18 @@
-import { useUrlStore } from '../state/url';
+import { useLiveStore } from '../state/live';
+import { REFRESH, useUrlStore } from '../state/url';
 import { ThemeToggle } from './ThemeToggle';
 
 /** S1 top bar — docs/design/"ais-lake MVP Batch 1 Map Shell.dc.html"
  *  :: "First visit" / "First visit · Blue Marble day".
- *  Search, region and refresh are visual stubs in M2-T1: correct copy and
- *  geometry, no behaviour behind them yet. */
+ *  Search and region are still visual stubs: correct copy and geometry, no
+ *  behaviour behind them yet. Refresh is live (F1). */
 
 const SEARCH_PLACEHOLDER = 'Search a ship, a port, a sea…';
-const REFRESH_LABEL = 'LIVE · 10s';
 const SIGN_IN_LABEL = 'Sign in';
+
+/** Anonymous is the only tier until sign-in lands (M6); faster cadences are
+ *  shown-but-disabled, which is the wall the spec asks for. */
+const TIER = 'anon';
 
 function Caret() {
   return (
@@ -54,25 +58,50 @@ function RegionStub({ region }: { region: string }) {
   );
 }
 
-/** F1 refresh control: the LIVE dot, the cadence, and the sweep that runs the
- *  10-second cycle. Static UI here — the real cadence arrives with the socket. */
-function RefreshStub() {
+/** F1 refresh control: the LIVE dot (socket health), the cadence selector, and
+ *  the sweep that runs the cycle. The <select> is the native one, laid
+ *  transparent over the pill — keyboard and screen readers for free. */
+function Refresh() {
+  const interval = useUrlStore((s) => s.interval);
+  const patch = useUrlStore((s) => s.patch);
+  const status = useLiveStore((s) => s.status);
+
   return (
-    <div className="flex flex-col gap-[5px]">
-      <div className="flex h-[26px] items-center gap-[9px] border border-[var(--chrome-hairline-strong)] bg-[var(--chrome-live-fill)] px-[10px]">
+    <div className="flex flex-col gap-[5px]" data-live={status}>
+      <div className="relative flex h-[26px] items-center gap-[9px] border border-[var(--chrome-hairline-strong)] bg-[var(--chrome-live-fill)] px-[10px]">
         <span
           className="h-[5px] w-[5px] rounded-full bg-[var(--chrome-live-dot)]"
-          style={{ animation: 'live-dot 2s ease-in-out infinite' }}
+          style={
+            status === 'live'
+              ? { animation: 'live-dot 2s ease-in-out infinite' }
+              : { opacity: status === 'down' ? 0.3 : 0.6 }
+          }
         />
         <span className="font-mono text-[10.5px] tracking-[0.16em] text-[var(--chrome-live-ink)]">
-          {REFRESH_LABEL}
+          LIVE · {interval}s
         </span>
         <Caret />
+        <select
+          aria-label="Refresh interval"
+          value={interval}
+          onChange={(event) => patch({ interval: Number(event.target.value) })}
+          className="absolute inset-0 cursor-pointer appearance-none border-0 bg-transparent text-transparent opacity-0"
+        >
+          {REFRESH.options.map((seconds) => (
+            <option key={seconds} value={seconds} disabled={seconds < REFRESH.floor[TIER]}>
+              {seconds}s
+            </option>
+          ))}
+        </select>
       </div>
       <div className="h-[2px] overflow-hidden bg-[var(--chrome-sweep-track)]">
+        {/* key: restart the animation on a cadence change — that restart IS the
+            visible "switch takes effect within one cycle". */}
         <div
+          key={interval}
+          data-sweep=""
           className="h-[2px] origin-left bg-[var(--chrome-sweep-fill)]"
-          style={{ animation: 'live-sweep 10s linear infinite' }}
+          style={{ animation: `live-sweep ${interval}s linear infinite` }}
         />
       </div>
     </div>
@@ -90,7 +119,7 @@ export function TopBar() {
       <SearchStub />
       <div className="flex-1" />
       <RegionStub region={region} />
-      <RefreshStub />
+      <Refresh />
       <ThemeToggle />
       <button
         type="button"

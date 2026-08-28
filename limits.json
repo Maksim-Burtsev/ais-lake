@@ -4,5 +4,9 @@
     "options": [5, 10, 30],
     "default": 10,
     "floor": { "anon": 10, "free": 5 }
+  },
+  "map_vessel_age_s": {
+    "$comment": "How old a ship's last fix may be and still count as here. Past this it is off the map and out of every region count — the refinery's hot hash keeps a field forever, so without the cut the fleet is padded with ships that stopped reporting days ago. 24 h is the same window F7 'Recently silent' speaks in (docs/01-mvp-spec.html F7: 'brights <=24 h silents'), so when M3's gap classifier starts marking state=silent those ships are already inside the window and nothing has to be widened.",
+    "max": 86400
   }
 }

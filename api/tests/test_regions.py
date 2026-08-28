@@ -2,12 +2,12 @@
 
 from app.map import parse_bbox
 from app.regions import REGIONS, regions_payload
-from tests.test_map import DeadRedis, FakeRedis, field
+from tests.test_map import FRESH, STALE, DeadRedis, FakeRedis, field
 
 # One ship in the Kattegat, one off the Dutch coast (inside neither strait).
 FLEET = {
-    "244660000": field(1789000000, 56.8, 11.5, 12.4, 87.0, "underway"),
-    "205344000": field(1789000001, 51.9, 4.1, 0.0, 210.0, "moored"),
+    "244660000": field(FRESH, 56.8, 11.5, 12.4, 87.0, "underway"),
+    "205344000": field(FRESH, 51.9, 4.1, 0.0, 210.0, "moored"),
 }
 
 
@@ -20,6 +20,14 @@ async def test_counts_are_per_bbox_and_boxes_overlap() -> None:
     assert counts["North Sea"] == 2  # both ships are in the launch box
     assert counts["Kattegat"] == 1  # ... and one of them also in the Kattegat
     assert counts["Dover Strait"] == 0  # a real zero, not a null
+
+
+async def test_a_stale_fix_does_not_inflate_a_region_count() -> None:
+    """Same cut as the map: a ship last heard days ago is not "here" in the picker."""
+    ghost = {**FLEET, "219000001": field(STALE, 56.9, 11.6, 0.0, 0.0, "moored")}
+    counts = by_name(await regions_payload(FakeRedis(ghost)))
+    assert counts["North Sea"] == 2
+    assert counts["Kattegat"] == 1
 
 
 async def test_coming_soon_regions_never_get_a_count() -> None:

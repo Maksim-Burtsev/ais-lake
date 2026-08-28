@@ -4,6 +4,7 @@
  *  the row saying what the water is showing.
  *  docs/design "Batch 1 Map Shell" :: "Filter · Recently silent". */
 
+import limits from '../limits.json';
 import { useLiveStore } from '../state/live';
 import { useUrlStore, type VesselFilter } from '../state/url';
 
@@ -48,6 +49,10 @@ export function FilterChips() {
   );
 }
 
+/** The window the sentence speaks in, from the one limits file (F27) — the same
+ *  number the api cuts the map snapshot at, never one typed in here. */
+const WINDOW_H = limits.map_vessel_age_s.max / 3600;
+
 /** The result line under the chips — a sentence, not a count badge.
  *  The frame's mono "· longest gap 3 h 30 m" tail waits for M3: nothing measures
  *  gap length yet. */
@@ -58,8 +63,8 @@ export function SilentCountLine() {
   return (
     <span className="text-[13px] text-[var(--chrome-chip-ink)]">
       {silent === 0
-        ? 'No ships have gone silent here in the last 24 h.'
-        : `${silent} ${silent === 1 ? 'ship' : 'ships'} went silent here in the last 24 h`}
+        ? `No ships have gone silent here in the last ${WINDOW_H} h.`
+        : `${silent} ${silent === 1 ? 'ship' : 'ships'} went silent here in the last ${WINDOW_H} h`}
     </span>
   );
 }

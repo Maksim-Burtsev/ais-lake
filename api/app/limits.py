@@ -16,6 +16,8 @@ LIMITS: dict[str, Any] = json.loads(
     Path(os.environ.get("LIMITS_PATH") or DEFAULT_PATH).read_text()
 )
 REFRESH: dict[str, Any] = LIMITS["map_refresh_s"]
+# Older than this and a ship is not on the map and not in a region count (map.py).
+MAX_VESSEL_AGE_S: int = int(LIMITS["map_vessel_age_s"]["max"])
 
 
 def clamp_interval(requested: Any, tier: str = "anon") -> int:

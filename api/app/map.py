@@ -19,6 +19,8 @@ import time
 from collections.abc import Iterator
 from typing import Any, Protocol
 
+from .limits import MAX_VESSEL_AGE_S
+
 logger = logging.getLogger("map")
 
 REGION = os.environ.get("REGION_SLUG", "north-sea")
@@ -59,7 +61,8 @@ async def _rows(client: RedisClient | None) -> Iterator[list[Any]]:
     """ONE HGETALL of the hot hash, decoded to [mmsi, lat, lon, cog, sog, state, sym].
 
     Every reader of the hash goes through here (snapshot + the region counts), so
-    the skip-the-junk rules and the field transpose live in exactly one place.
+    the skip-the-junk rules, the age cut and the field transpose live in exactly
+    one place.
     """
     if client is None:
         raise SnapshotUnavailable("no redis connection")
@@ -68,6 +71,8 @@ async def _rows(client: RedisClient | None) -> Iterator[list[Any]]:
     except Exception as exc:
         logger.warning("snapshot unavailable: %s: %s", type(exc).__name__, exc)
         raise SnapshotUnavailable(str(exc)) from exc
+
+    now = time.time()
 
     def decode() -> Iterator[list[Any]]:
         for mmsi, field in raw.items():
@@ -79,10 +84,17 @@ async def _rows(client: RedisClient | None) -> Iterator[list[Any]]:
             # a dict would unpack into its key names, so demand the wire's own shape
             if not isinstance(decoded, list) or len(decoded) not in FRAME_FIELDS:
                 continue
-            _ts, lat, lon, sog, cog, state, *rest = decoded
+            ts, lat, lon, sog, cog, state, *rest = decoded
             # lat/lon are compared against the bbox by every caller; text there would
             # blow up a count or a cull. Same guard live.py applies to its frames.
             if not isinstance(lat, int | float) or not isinstance(lon, int | float):
+                continue
+            # the refinery never expires a field, so a ship that stopped reporting days
+            # ago is still in the hash. Past the cut it is neither drawn nor counted —
+            # "live" has to mean live. A text ts is unreadable, so it goes too.
+            # ponytail: read-side cut only, the hash itself still grows without bound.
+            # The HDEL sweep is refinery hygiene and deliberately not in this task.
+            if not isinstance(ts, int | float) or now - ts > MAX_VESSEL_AGE_S:
                 continue
             yield [key, lat, lon, cog, sog, state, rest[0] if rest else UNKNOWN_SYM]
 

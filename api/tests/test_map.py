@@ -1,10 +1,18 @@
 """/v1/map/snapshot against a fake hash — no Redis, no network."""
 
 import json
+import time
 
 import pytest
 
+from app.limits import MAX_VESSEL_AGE_S
 from app.map import SnapshotUnavailable, parse_bbox, snapshot_payload
+
+# _rows cuts on age against the wall clock, so fixtures are dated relative to it —
+# a literal epoch would quietly go stale and take every test here with it.
+NOW = int(time.time())
+FRESH = NOW - 60
+STALE = NOW - MAX_VESSEL_AGE_S - 60
 
 
 def field(ts: int, lat: float, lon: float, sog: float, cog: float, state: str,
@@ -29,8 +37,8 @@ class DeadRedis:
 
 
 NORTH_SEA = {
-    "244660000": field(1789000000, 55.1, 3.2, 12.4, 087.0, "underway"),
-    "205344000": field(1789000001, 51.9, 4.1, 0.0, 210.0, "moored"),
+    "244660000": field(FRESH, 55.1, 3.2, 12.4, 087.0, "underway"),
+    "205344000": field(FRESH, 51.9, 4.1, 0.0, 210.0, "moored"),
 }
 
 
@@ -43,7 +51,7 @@ async def test_field_order_is_transposed_to_cog_then_sog() -> None:
 
 
 async def test_six_element_fields_still_read_as_an_unknown_silhouette() -> None:
-    old = {"244660000": field(1789000000, 55.1, 3.2, 12.4, 87.0, "underway", sym=None)}
+    old = {"244660000": field(FRESH, 55.1, 3.2, 12.4, 87.0, "underway", sym=None)}
     payload = await snapshot_payload(FakeRedis(old))
     assert payload["vessels"] == [[244660000, 55.1, 3.2, 87.0, 12.4, "underway", "unknown2"]]
 
@@ -73,7 +81,7 @@ async def test_text_coordinates_are_skipped_everywhere_not_fatal() -> None:
     from app.regions import regions_payload
 
     bad = {
-        "1": json.dumps([1789000000, "fifty-five", 3.2, 12.4, 87.0, "underway", "cargo3"]),
+        "1": json.dumps([FRESH, "fifty-five", 3.2, 12.4, 87.0, "underway", "cargo3"]),
         "244660000": NORTH_SEA["244660000"],
     }
     payload = await snapshot_payload(FakeRedis(bad))
@@ -86,10 +94,30 @@ async def test_text_coordinates_are_skipped_everywhere_not_fatal() -> None:
 async def test_dict_and_overlong_fields_are_skipped() -> None:
     junk = {
         "1": json.dumps({"ts": 1, "lat": 55.1}),  # a dict would unpack into key names
-        "2": json.dumps([1789000000, 55.1, 3.2, 12.4, 87.0, "underway", "cargo3", "extra"]),
+        "2": json.dumps([FRESH, 55.1, 3.2, 12.4, 87.0, "underway", "cargo3", "extra"]),
         "3": NORTH_SEA["244660000"],
     }
     payload = await snapshot_payload(FakeRedis(junk))
+    assert payload["count"] == 1
+
+
+async def test_fixes_older_than_the_age_cut_are_off_the_map() -> None:
+    """The hash never expires a field, so the ghosts have to be cut on read."""
+    fleet = {
+        "244660000": NORTH_SEA["244660000"],
+        "205344000": field(STALE, 55.2, 3.3, 0.0, 12.0, "underway"),
+    }
+    payload = await snapshot_payload(FakeRedis(fleet))
+    assert [v[0] for v in payload["vessels"]] == [244660000]
+    assert payload["count"] == 1
+
+
+async def test_a_text_ts_is_skipped_not_fatal() -> None:
+    bad = {
+        "1": json.dumps(["yesterday", 55.1, 3.2, 12.4, 87.0, "underway", "cargo3"]),
+        "244660000": NORTH_SEA["244660000"],
+    }
+    payload = await snapshot_payload(FakeRedis(bad))
     assert payload["count"] == 1
 
 

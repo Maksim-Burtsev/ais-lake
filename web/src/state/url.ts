@@ -25,6 +25,8 @@ export interface UrlState {
   zoom?: number;
   center?: Center;
   filter?: VesselFilter;
+  /** F8/F10 — the tapped ship's MMSI. Absent = nothing selected, no card. */
+  selection?: number;
 }
 
 /** Launch region. The frames say "Black Sea" — illustrative; launch is the
@@ -78,6 +80,13 @@ export const PARAMS: Params = {
       return lon === undefined || lat === undefined ? undefined : [lon, lat];
     },
     serialize: (value) => (value === undefined ? null : `${value[0].toFixed(4)},${value[1].toFixed(4)}`),
+  },
+  selection: {
+    param: 'sel',
+    // Nine digits or nothing: ?sel=banana is a typo in someone's address bar, not
+    // a reason for the map to fail to boot.
+    parse: (raw) => (/^\d{9}$/.test(raw) ? Number(raw) : undefined),
+    serialize: (value) => (value === undefined ? null : String(value)),
   },
   filter: {
     param: 'f',

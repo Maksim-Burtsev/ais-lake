@@ -32,6 +32,7 @@ FRAME_FIELDS = (6, 7)
 
 class RedisClient(Protocol):
     def hgetall(self, name: str) -> Any: ...
+    def hget(self, name: str, key: str) -> Any: ...
 
 
 class SnapshotUnavailable(Exception):
@@ -76,29 +77,55 @@ async def _rows(client: RedisClient | None) -> Iterator[list[Any]]:
 
     def decode() -> Iterator[list[Any]]:
         for mmsi, field in raw.items():
-            try:
-                decoded = json.loads(field)
-                key = int(mmsi)
-            except (ValueError, TypeError):
-                continue  # a half-written or future-shaped field/key is skipped, not fatal
-            # a dict would unpack into its key names, so demand the wire's own shape
-            if not isinstance(decoded, list) or len(decoded) not in FRAME_FIELDS:
-                continue
-            ts, lat, lon, sog, cog, state, *rest = decoded
-            # lat/lon are compared against the bbox by every caller; text there would
-            # blow up a count or a cull. Same guard live.py applies to its frames.
-            if not isinstance(lat, int | float) or not isinstance(lon, int | float):
-                continue
-            # the refinery never expires a field, so a ship that stopped reporting days
-            # ago is still in the hash. Past the cut it is neither drawn nor counted —
-            # "live" has to mean live. A text ts is unreadable, so it goes too.
-            # ponytail: read-side cut only, the hash itself still grows without bound.
-            # The HDEL sweep is refinery hygiene and deliberately not in this task.
-            if not isinstance(ts, int | float) or now - ts > MAX_VESSEL_AGE_S:
-                continue
-            yield [key, lat, lon, cog, sog, state, rest[0] if rest else UNKNOWN_SYM]
+            row = _decode(mmsi, field, now)
+            if row is not None:
+                yield row
 
     return decode()
+
+
+def _decode(mmsi: Any, field: Any, now: float) -> list[Any] | None:
+    """One hash field -> [mmsi, lat, lon, cog, sog, state, sym], or None if it is
+    junk, from before the sym token, or too old to still count as live."""
+    try:
+        decoded = json.loads(field)
+        key = int(mmsi)
+    except (ValueError, TypeError):
+        return None  # a half-written or future-shaped field/key is skipped, not fatal
+    # a dict would unpack into its key names, so demand the wire's own shape
+    if not isinstance(decoded, list) or len(decoded) not in FRAME_FIELDS:
+        return None
+    ts, lat, lon, sog, cog, state, *rest = decoded
+    # lat/lon are compared against the bbox by every caller; text there would
+    # blow up a count or a cull. Same guard live.py applies to its frames.
+    if not isinstance(lat, int | float) or not isinstance(lon, int | float):
+        return None
+    # the refinery never expires a field, so a ship that stopped reporting days
+    # ago is still in the hash. Past the cut it is neither drawn nor counted —
+    # "live" has to mean live. A text ts is unreadable, so it goes too.
+    # ponytail: read-side cut only, the hash itself still grows without bound.
+    # The HDEL sweep is refinery hygiene and deliberately not in this task.
+    if not isinstance(ts, int | float) or now - ts > MAX_VESSEL_AGE_S:
+        return None
+    return [key, lat, lon, cog, sog, state, rest[0] if rest else UNKNOWN_SYM]
+
+
+async def row_for(client: RedisClient | None, mmsi: int) -> list[Any] | None:
+    """ONE HGET for a single ship, through the same decoder as the snapshot.
+
+    The card wants the `sym` token that already rides the wire; a second
+    json.loads site is exactly how the two readers would drift apart. Unlike the
+    snapshot this one does not raise when Redis is missing — a card without a
+    sprite token only loses its class, and a card is still worth drawing.
+    """
+    if client is None:
+        return None
+    try:
+        field = await client.hget(f"latest:{REGION}", str(mmsi))
+    except Exception as exc:
+        logger.warning("hot hash unavailable: %s: %s", type(exc).__name__, exc)
+        return None
+    return None if field is None else _decode(mmsi, field, time.time())
 
 
 async def counts_for(

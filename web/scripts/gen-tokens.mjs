@@ -18,7 +18,7 @@
  *
  * FRAME_EXTRAS below carries values that appear in the approved frames but are
  * NOT in tokens.json (top-bar hairline, search-field fill, LIVE-pill chrome,
- * day accents). They are namespaced --chrome-* so they never masquerade as
+ * the region picker, the F8 ship card, day accents). They are namespaced --chrome-* so they never masquerade as
  * tokens. Each one is annotated with the frame it was measured from. When
  * tokens.json grows these values, delete them here.
  */
@@ -73,6 +73,26 @@ const FRAME_EXTRAS = {
     'chrome-picker-rule': '#16283A',
     'chrome-picker-gold': '#E8B25C', // "Straits" header + the active row's rail
     'chrome-picker-active-fill': 'rgba(232,178,92,.1)',
+    // F8 ship card :: "Night Passage · 1440 × 900" (2c) + "Mobile · ship tapped" (5g)
+    'chrome-card-fill': 'rgba(10,22,32,.94)',
+    'chrome-card-sheet-fill': '#0A1620', // the mobile sheet is opaque, not a panel
+    'chrome-card-border': '#1C3040',
+    'chrome-card-shadow': '0 24px 52px rgba(2,10,18,.6)',
+    'chrome-card-sheet-shadow': '0 -18px 44px rgba(0,0,0,.5)',
+    'chrome-card-handle': '#26404F', // the sheet's grab handle
+    'chrome-card-eyebrow': '#E8B25C',
+    'chrome-card-age': '#6E8798',
+    'chrome-card-name': '#F6F0E3',
+    'chrome-card-sub': '#9DB4C2',
+    'chrome-card-rule': '#1C3040',
+    'chrome-card-sentence': '#DCE7ED',
+    'chrome-card-strong': '#F6F0E3',
+    'chrome-card-figure': '#5FDCC9', // the mono numerals inside the sentence
+    'chrome-card-particulars': '#8FB4C6',
+    'chrome-card-action-fill': '#E8B25C',
+    'chrome-card-action-ink': '#0A1620',
+    'chrome-card-star-border': '#2A4457',
+    'chrome-card-star-ink': '#9DB4C2',
   },
   day: {
     'chrome-hairline': '#D8CDB4', // == color.day.border (top bar + search)
@@ -109,6 +129,26 @@ const FRAME_EXTRAS = {
     'chrome-picker-rule': '#DFD5BE',
     'chrome-picker-gold': '#B87F3A', // == color.day.gold
     'chrome-picker-active-fill': 'rgba(184,127,58,.12)',
+    // F8 ship card :: "Blue Marble day" hero card, re-measured at the 1440 geometry
+    'chrome-card-fill': '#FBF6EA',
+    'chrome-card-sheet-fill': '#FBF6EA',
+    'chrome-card-border': '#C9BC9E',
+    'chrome-card-shadow': '0 28px 64px rgba(8,40,64,.35)',
+    'chrome-card-sheet-shadow': '0 -18px 44px rgba(40,30,10,.28)',
+    'chrome-card-handle': '#D8CDB4',
+    'chrome-card-eyebrow': '#B8145A',
+    'chrome-card-age': '#77858E',
+    'chrome-card-name': '#0C1D28',
+    'chrome-card-sub': '#5C6B74',
+    'chrome-card-rule': '#D8CDB4',
+    'chrome-card-sentence': '#233642',
+    'chrome-card-strong': '#0C1D28',
+    'chrome-card-figure': '#0B5E7A',
+    'chrome-card-particulars': '#6C7B84',
+    'chrome-card-action-fill': '#D8361F',
+    'chrome-card-action-ink': '#FFF6F3',
+    'chrome-card-star-border': '#C9BC9E',
+    'chrome-card-star-ink': '#5C6B74',
   },
 };
 

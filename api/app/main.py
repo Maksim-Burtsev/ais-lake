@@ -22,6 +22,7 @@ from .limits import clamp_interval
 from .live import Deltas, live_socket, subscribe_forever
 from .map import SnapshotUnavailable, parse_bbox, snapshot_payload
 from .regions import regions_payload
+from .ships import CardUnavailable, ShipNotFound, card_for
 from .status import build_status
 
 logger = logging.getLogger("api")
@@ -123,6 +124,19 @@ async def regions() -> dict[str, Any]:
     """F6: the picker's seas and straits with a live count each. Never 503s —
     Redis down means every count is null and the panel shows "—"."""
     return await regions_payload(runtime.redis)
+
+
+@app.get("/v1/ships/{key}")
+async def ship_card(key: str) -> dict[str, Any]:
+    """F8: identity, the server-rendered sentence and the latest fix, for the card
+    behind a ship tap. `key` is a 9-digit MMSI or a 7-digit IMO; a key of any other
+    shape 404s alongside the ships we simply do not hold (see ships.py)."""
+    try:
+        return await card_for(runtime.clickhouse, runtime.redis, key)
+    except ShipNotFound as exc:
+        raise HTTPException(404, "no such ship") from exc
+    except CardUnavailable as exc:
+        raise HTTPException(503, "ship card unavailable") from exc
 
 
 @app.websocket("/v1/live")

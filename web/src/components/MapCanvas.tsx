@@ -80,18 +80,51 @@ function applyFilter(map: maplibregl.Map, filter: VesselFilter | undefined, them
   }
 }
 
-/** colour = state (tokens.json color.<theme>.vessel); shape = class. */
-function iconColor(theme: 'night' | 'day'): maplibregl.ExpressionSpecification {
+/** F8/F10 — the selected ship is PAINT, not data. The fleet's whole collection is
+ *  re-pushed on every change (see `upsert`), so rebuilding it per click would cost
+ *  O(fleet) for one changed feature. Instead both layers carry a `case` on mmsi and
+ *  a selection change is two setters. 0 is the sentinel: MMSIs are nine digits, so
+ *  no ship can ever be it, and the expression stays well-formed with nothing chosen. */
+const NO_SELECTION = 0;
+
+/** colour = state (tokens.json color.<theme>.vessel); shape = class. The selected
+ *  ship substitutes the state SYMBOLOGY.md §2 already has a colour for. */
+function iconColor(
+  theme: 'night' | 'day',
+  selection = NO_SELECTION,
+): maplibregl.ExpressionSpecification {
   const c = tokens.color[theme].vessel;
   return [
     'match',
-    ['get', 'state'],
+    ['case', ['==', ['get', 'mmsi'], selection], 'selected', ['get', 'state']],
     'anchored', c['anchor.lit'],
     'moored', c['moor.lit'],
     'silent', c.silent,
     'selected', c.halo,
     c['hull.lit'],
   ] as maplibregl.ExpressionSpecification;
+}
+
+/** ... and the same substitution on the silhouette: `${cls}-selected` is already in
+ *  the atlas (hulls.ts STATES), so the double halo costs no new sprite. */
+const selectedIcon = (selection = NO_SELECTION): maplibregl.ExpressionSpecification => [
+  'case',
+  ['==', ['get', 'mmsi'], selection],
+  ['concat', ['get', 'cls'], '-selected'],
+  ['get', 'icon'],
+];
+
+/** On layer creation, on every selection change, and after every style swap. */
+function applySelection(
+  map: maplibregl.Map,
+  selection: number | undefined,
+  theme: 'night' | 'day',
+) {
+  map.setLayoutProperty(HULL_LAYER, 'icon-image', selectedIcon(selection));
+  map.setPaintProperty(HULL_LAYER, 'icon-color', iconColor(theme, selection));
+  // rung 1 keeps its lozenge — class is deliberately unreadable there — and only
+  // takes the halo colour.
+  map.setPaintProperty(LOZ_LAYER, 'icon-color', iconColor(theme, selection));
 }
 
 type VesselFeature = Feature<
@@ -155,10 +188,9 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
   } else {
     map.addSource(SOURCE, { type: 'geojson', data });
   }
-  const filter = useUrlStore.getState().filter;
+  const { filter, selection } = useUrlStore.getState();
   if (map.getLayer(HULL_LAYER)) {
-    map.setPaintProperty(LOZ_LAYER, 'icon-color', iconColor(theme));
-    map.setPaintProperty(HULL_LAYER, 'icon-color', iconColor(theme));
+    applySelection(map, selection, theme);
     map.setPaintProperty(SHADOW_LAYER, 'icon-color', tokens.color[theme].vessel.shadow);
     for (const id of PULSE_LAYERS) {
       map.setPaintProperty(id, 'circle-stroke-color', tokens.color[theme].vessel.silent);
@@ -203,7 +235,7 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
       'icon-size': ['step', ['zoom'],
         LOZ[0] / NOMINAL_L, 7, LOZ[1] / NOMINAL_L, 8, LOZ[2] / NOMINAL_L],
     },
-    paint: { 'icon-color': iconColor(theme) },
+    paint: { 'icon-color': iconColor(theme, selection) },
   });
   // the cast shadow: the same silhouette, offset and dimmed, under the hull.
   // A silent ship throws none — it is a ghost, not a hull in the water.
@@ -231,10 +263,10 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
     minzoom: RUNG2_ZOOM,
     layout: {
       ...common,
-      'icon-image': ['get', 'icon'],
+      'icon-image': selectedIcon(selection),
       'icon-size': ['/', ['get', 'px'], NOMINAL_L],
     },
-    paint: { 'icon-color': iconColor(theme) },
+    paint: { 'icon-color': iconColor(theme, selection) },
   });
   applyFilter(map, filter, theme);
 }
@@ -366,6 +398,21 @@ export function MapCanvas() {
       recount();
     });
 
+    // F8/F10 — a tap selects, bare water clears. Both vessel layers are wired
+    // because they are zoom-gated (rung 1 below z9, rung 2 above), and the plain
+    // handler runs last: it publishes whichever ship the layer handlers found, or
+    // undefined when the click landed on the sea.
+    let hit: number | undefined;
+    const pick = (event: maplibregl.MapLayerMouseEvent) => {
+      hit = event.features?.[0]?.properties.mmsi as number | undefined;
+    };
+    map.on('click', LOZ_LAYER, pick);
+    map.on('click', HULL_LAYER, pick);
+    map.on('click', () => {
+      useUrlStore.getState().patch({ selection: hit });
+      hit = undefined;
+    });
+
     // F6 — a region pick just flies: `moveend` fires at the end of the fly and is
     // the single fetch path (and what re-subscribes the socket), so fetching here
     // too only bought a second HGETALL whose answer was thrown away.
@@ -375,7 +422,12 @@ export function MapCanvas() {
 
     let painted = useUrlStore.getState().theme;
     let filtered = useUrlStore.getState().filter;
+    let chosen = useUrlStore.getState().selection;
     const unsubscribe = useUrlStore.subscribe((state) => {
+      if (state.selection !== chosen) {
+        chosen = state.selection;
+        if (map.getLayer(HULL_LAYER)) applySelection(map, chosen, state.theme);
+      }
       if (state.filter !== filtered) {
         filtered = state.filter;
         if (map.getLayer(HULL_LAYER)) applyFilter(map, state.filter, state.theme);

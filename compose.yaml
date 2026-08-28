@@ -42,8 +42,10 @@ services:
       CLICKHOUSE_HOST: clickhouse
       REGION_SLUG: ${REGION_SLUG:-north-sea}   # same default as pipeline Settings
       LIMITS_PATH: /limits.json
+      REGIONS_PATH: /regions.json
     volumes:
-      - ./limits.json:/limits.json:ro   # the root file is outside the ./api build context
+      - ./limits.json:/limits.json:ro    # the root files are outside the ./api build context
+      - ./regions.json:/regions.json:ro
     ports:
       - "8000:8000"
     depends_on:

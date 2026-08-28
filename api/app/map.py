@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Iterator
 from typing import Any, Protocol
 
 logger = logging.getLogger("map")
@@ -46,10 +47,17 @@ def parse_bbox(raw: str) -> tuple[float, float, float, float]:
     return min_lon, min_lat, max_lon, max_lat
 
 
-async def snapshot_payload(
-    client: RedisClient | None,
-    bbox: tuple[float, float, float, float] | None = None,
-) -> dict[str, Any]:
+def inside(bbox: tuple[float, float, float, float], lon: float, lat: float) -> bool:
+    min_lon, min_lat, max_lon, max_lat = bbox
+    return min_lon <= lon <= max_lon and min_lat <= lat <= max_lat
+
+
+async def _rows(client: RedisClient | None) -> Iterator[list[Any]]:
+    """ONE HGETALL of the hot hash, decoded to [mmsi, lat, lon, cog, sog, state, sym].
+
+    Every reader of the hash goes through here (snapshot + the region counts), so
+    the skip-the-junk rules and the field transpose live in exactly one place.
+    """
     if client is None:
         raise SnapshotUnavailable("no redis connection")
     try:
@@ -58,19 +66,39 @@ async def snapshot_payload(
         logger.warning("snapshot unavailable: %s: %s", type(exc).__name__, exc)
         raise SnapshotUnavailable(str(exc)) from exc
 
-    vessels: list[list[Any]] = []
-    for mmsi, field in raw.items():
-        try:
-            _ts, lat, lon, sog, cog, state, *rest = json.loads(field)
-            key = int(mmsi)
-        except (ValueError, TypeError):
-            continue  # a half-written or future-shaped field/key is skipped, not fatal
-        if bbox is not None:
-            min_lon, min_lat, max_lon, max_lat = bbox
-            if not (min_lon <= lon <= max_lon and min_lat <= lat <= max_lat):
-                continue
-        vessels.append([key, lat, lon, cog, sog, state, rest[0] if rest else UNKNOWN_SYM])
+    def decode() -> Iterator[list[Any]]:
+        for mmsi, field in raw.items():
+            try:
+                _ts, lat, lon, sog, cog, state, *rest = json.loads(field)
+                key = int(mmsi)
+            except (ValueError, TypeError):
+                continue  # a half-written or future-shaped field/key is skipped, not fatal
+            yield [key, lat, lon, cog, sog, state, rest[0] if rest else UNKNOWN_SYM]
 
+    return decode()
+
+
+async def counts_for(
+    client: RedisClient | None,
+    boxes: list[tuple[float, float, float, float] | None],
+) -> list[int | None]:
+    """Ships per bbox from a single hash read. A None box (not live yet) stays None."""
+    rows = await _rows(client)
+    counts = [None if box is None else 0 for box in boxes]
+    for row in rows:
+        for i, box in enumerate(boxes):
+            if box is not None and inside(box, row[2], row[1]):
+                counts[i] += 1  # type: ignore[operator]
+    return counts
+
+
+async def snapshot_payload(
+    client: RedisClient | None,
+    bbox: tuple[float, float, float, float] | None = None,
+) -> dict[str, Any]:
+    vessels = [
+        row for row in await _rows(client) if bbox is None or inside(bbox, row[2], row[1])
+    ]
     return {
         "region": REGION,
         "ts": int(time.time()),

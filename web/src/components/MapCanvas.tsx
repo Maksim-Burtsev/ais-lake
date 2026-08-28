@@ -106,19 +106,43 @@ const feature = ([mmsi, lat, lon, cog, sog, state, sym]: Vessel): VesselFeature 
   properties: { mmsi, cog, state, ...iconOf(sym ?? 'unknown2', state, sog) },
 });
 
-/** The current viewport, in the api's bbox order. */
-function bboxOf(map: maplibregl.Map): string {
+/** minLon,minLat,maxLon,maxLat — the api's bbox order, everywhere in this file. */
+export type Bbox = [number, number, number, number];
+
+function boundsOf(map: maplibregl.Map): Bbox {
   const b = map.getBounds();
-  return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((v) => v.toFixed(4)).join(',');
+  return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
 }
 
-async function fetchVessels(map: maplibregl.Map): Promise<Vessel[]> {
-  const query = `bbox=${bboxOf(map)}&zoom=${map.getZoom().toFixed(2)}`;
+const bboxOf = (map: maplibregl.Map): string =>
+  boundsOf(map).map((v) => v.toFixed(4)).join(',');
+
+/** A snapshot is fetched for rather more than the visible box, so a small pan
+ *  costs nothing. Refetch only happens when the view leaves what was loaded. */
+const MARGIN = 0.3;
+const pad = ([w, s, e, n]: Bbox): Bbox => {
+  const dx = (e - w) * MARGIN;
+  const dy = (n - s) * MARGIN;
+  return [
+    Math.max(-180, w - dx), Math.max(-90, s - dy),
+    Math.min(180, e + dx), Math.min(90, n + dy),
+  ];
+};
+const covers = (box: Bbox, [w, s, e, n]: Bbox): boolean =>
+  box[0] <= w && box[1] <= s && box[2] >= e && box[3] >= n;
+
+async function fetchVessels(bbox: Bbox, zoom: number): Promise<Vessel[]> {
+  const query = `bbox=${bbox.map((v) => v.toFixed(4)).join(',')}&zoom=${zoom.toFixed(2)}`;
   const response = await fetch(`/v1/map/snapshot?${query}`);
   if (!response.ok) throw new Error(`snapshot ${response.status}`);
   const { vessels } = (await response.json()) as { vessels: Vessel[] };
   return vessels;
 }
+
+/** F6 — the picker's handle on the one map in the app.
+ *  ponytail: a module-level singleton, not context. There is exactly one
+ *  MapCanvas; the day a second one exists, this becomes a context provider. */
+export const mapView: { goto: ((bbox: Bbox) => void) | null } = { goto: null };
 
 /** Sprites + source + layers. Re-run after every setStyle — a style swap wipes all
  *  of them, images included. Idempotent on live pieces: an existing source gets the
@@ -285,9 +309,33 @@ export function MapCanvas() {
       syncPulse();
     };
 
+    // ponytail: the fleet is never pruned — a long session accumulates every ship
+    // ever panned over. Add an LRU when that memory actually hurts.
     const upsert = (rows: Vessel[]) => {
       for (const row of rows) fleet.set(row[0], feature(row));
       recount();
+    };
+    const push = () => {
+      void map.getSource<maplibregl.GeoJSONSource>(SOURCE)?.setData(collection());
+    };
+
+    // The snapshot's own bbox (padded), and a generation so a slow response for an
+    // old view can never clobber a newer one.
+    let loaded: Bbox | null = null;
+    let generation = 0;
+    const loadSnapshot = (box: Bbox) => {
+      const mine = ++generation;
+      loaded = box;
+      return fetchVessels(box, map.getZoom())
+        .then((rows) => {
+          if (mine !== generation) return; // a newer view already asked
+          upsert(rows);
+          push();
+        })
+        .catch((error: unknown) => {
+          if (mine === generation) loaded = null; // failed -> not loaded, try again on the next move
+          console.warn('map: no vessel snapshot —', error);
+        });
     };
 
     // The socket does not wait for the basemap: a slow tile host must not stall
@@ -298,22 +346,32 @@ export function MapCanvas() {
       () => bboxOf(map),
       (rows) => {
         upsert(rows);
-        void map.getSource<maplibregl.GeoJSONSource>(SOURCE)?.setData(collection());
+        push();
       },
     );
 
     map.on('load', () => {
-      fetchVessels(map)
-        .then(upsert)
-        .catch((error: unknown) => console.warn('map: no vessel snapshot —', error))
-        .finally(() => addVesselLayer(map, useUrlStore.getState().theme, collection()));
+      void loadSnapshot(pad(boundsOf(map))).finally(() =>
+        addVesselLayer(map, useUrlStore.getState().theme, collection()),
+      );
     });
 
     map.on('moveend', () => {
       const c = map.getCenter();
+      // A pan or jump out of the loaded box brings ships that no live delta would:
+      // deltas only carry what moved, so a fresh view needs a fresh snapshot.
+      const view = boundsOf(map);
+      if (!loaded || !covers(loaded, view)) void loadSnapshot(pad(view));
       useUrlStore.getState().patch({ zoom: map.getZoom(), center: [c.lng, c.lat] });
       recount();
     });
+
+    // F6 — a region pick: fly there AND fetch its ships now, from the picked box
+    // rather than the camera, so the new sea is populated inside the animation.
+    mapView.goto = (bbox: Bbox) => {
+      void loadSnapshot(pad(bbox));
+      map.fitBounds(bbox, { duration: 600 });
+    };
 
     let painted = useUrlStore.getState().theme;
     let filtered = useUrlStore.getState().filter;
@@ -334,6 +392,7 @@ export function MapCanvas() {
     if (import.meta.env.DEV) (window as unknown as { __map?: maplibregl.Map }).__map = map;
 
     return () => {
+      mapView.goto = null;
       stopLive();
       unsubscribe();
       if (raf) cancelAnimationFrame(raf);

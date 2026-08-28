@@ -62,6 +62,17 @@ const FRAME_EXTRAS = {
     'chrome-logo-dot': '#E8B25C',
     'chrome-logo-ink': '#F2EADB',
     'chrome-region-ink': '#F2EADB',
+    // F6 region picker panel :: "Region picker" (5c)
+    'chrome-picker-fill': 'rgba(10,22,32,.97)',
+    'chrome-picker-border': '#2A4457',
+    'chrome-picker-shadow': '0 26px 60px rgba(0,0,0,.6)',
+    'chrome-picker-section': '#6E8798', // the SEAS eyebrow
+    'chrome-picker-ink': '#DCE7ED',
+    'chrome-picker-ink-active': '#F6F0E3',
+    'chrome-picker-count': '#7E8B93',
+    'chrome-picker-rule': '#16283A',
+    'chrome-picker-gold': '#E8B25C', // "Straits" header + the active row's rail
+    'chrome-picker-active-fill': 'rgba(232,178,92,.1)',
   },
   day: {
     'chrome-hairline': '#D8CDB4', // == color.day.border (top bar + search)
@@ -87,6 +98,17 @@ const FRAME_EXTRAS = {
     'chrome-logo-dot': '#D8361F',
     'chrome-logo-ink': '#0E2231',
     'chrome-region-ink': '#0E2231',
+    // F6 region picker — the same panel in the day palette (no day frame for it).
+    'chrome-picker-fill': 'rgba(251,246,234,.97)',
+    'chrome-picker-border': '#C9BC9E',
+    'chrome-picker-shadow': '0 26px 60px rgba(40,30,10,.22)',
+    'chrome-picker-section': '#77858E',
+    'chrome-picker-ink': '#0E2231',
+    'chrome-picker-ink-active': '#0E2231',
+    'chrome-picker-count': '#6C7B84',
+    'chrome-picker-rule': '#DFD5BE',
+    'chrome-picker-gold': '#B87F3A', // == color.day.gold
+    'chrome-picker-active-fill': 'rgba(184,127,58,.12)',
   },
 };
 

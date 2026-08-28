@@ -21,6 +21,7 @@ from .consumer import LatestShips, consume_forever
 from .limits import clamp_interval
 from .live import Deltas, live_socket, subscribe_forever
 from .map import SnapshotUnavailable, parse_bbox, snapshot_payload
+from .regions import regions_payload
 from .status import build_status
 
 logger = logging.getLogger("api")
@@ -115,6 +116,13 @@ async def map_snapshot(bbox: str | None = None, zoom: float | None = None) -> di
         return await snapshot_payload(runtime.redis, box)
     except SnapshotUnavailable as exc:
         raise HTTPException(503, "live snapshot unavailable") from exc
+
+
+@app.get("/v1/regions")
+async def regions() -> dict[str, Any]:
+    """F6: the picker's seas and straits with a live count each. Never 503s —
+    Redis down means every count is null and the panel shows "—"."""
+    return await regions_payload(runtime.redis)
 
 
 @app.websocket("/v1/live")

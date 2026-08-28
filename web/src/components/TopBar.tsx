@@ -1,11 +1,12 @@
 import { useLiveStore } from '../state/live';
 import { REFRESH, useUrlStore } from '../state/url';
+import { RegionPicker } from './RegionPicker';
 import { ThemeToggle } from './ThemeToggle';
 
 /** S1 top bar — docs/design/"ais-lake MVP Batch 1 Map Shell.dc.html"
  *  :: "First visit" / "First visit · Blue Marble day".
- *  Search and region are still visual stubs: correct copy and geometry, no
- *  behaviour behind them yet. Refresh is live (F1). */
+ *  Search is still a visual stub: correct copy and geometry, no behaviour behind
+ *  it yet. Refresh (F1) and the region picker (F6) are live. */
 
 const SEARCH_PLACEHOLDER = 'Search a ship, a port, a sea…';
 const SIGN_IN_LABEL = 'Sign in';
@@ -46,14 +47,6 @@ function SearchStub() {
       <span className="text-[13px] text-[var(--chrome-search-placeholder)]">
         {SEARCH_PLACEHOLDER}
       </span>
-    </div>
-  );
-}
-
-function RegionStub({ region }: { region: string }) {
-  return (
-    <div className="flex items-center gap-[8px] border-r border-[var(--chrome-hairline)] pr-[18px] text-[13px] text-[var(--chrome-region-ink)]">
-      {region} <Caret />
     </div>
   );
 }
@@ -109,8 +102,6 @@ function Refresh() {
 }
 
 export function TopBar() {
-  const region = useUrlStore((s) => s.region);
-
   return (
     <header className="relative z-30 flex h-[var(--bar-h)] items-center gap-[var(--bar-gap)] border-b border-[var(--chrome-hairline)] bg-[var(--chrome-bar-fill)] px-[var(--bar-pad-x)]">
       <div className="font-display text-[21px] font-medium whitespace-nowrap text-[var(--chrome-logo-ink)]">
@@ -118,7 +109,7 @@ export function TopBar() {
       </div>
       <SearchStub />
       <div className="flex-1" />
-      <RegionStub region={region} />
+      <RegionPicker />
       <Refresh />
       <ThemeToggle />
       <button

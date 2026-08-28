@@ -1,0 +1,12 @@
+{
+  "$comment": "Every region the picker offers, in ONE file (same rule as limits.json). bbox is [w, s, e, n]. A sea with \"live\": false gets a null count in /v1/regions — null IS the coming-soon signal on the wire. Launch is the North Sea + English Channel, and the two launch straits are Dover + Kattegat (docs/01-mvp-spec.html §00 + F35: 'Dover Strait + Kattegat at launch'); the frame's Black Sea / Bosphorus cast is illustrative only.",
+  "seas": [
+    { "slug": "north-sea", "name": "North Sea", "bbox": [-6.5, 49.0, 13.0, 61.5], "live": true },
+    { "slug": "baltic", "name": "Baltic", "bbox": [9.5, 53.5, 30.0, 66.0], "live": false },
+    { "slug": "biscay", "name": "Bay of Biscay", "bbox": [-10.0, 43.5, -1.0, 48.5], "live": false }
+  ],
+  "straits": [
+    { "slug": "dover-strait", "name": "Dover Strait", "bbox": [0.9, 50.7, 2.2, 51.4], "live": true },
+    { "slug": "kattegat", "name": "Kattegat", "bbox": [9.5, 55.5, 13.0, 58.0], "live": true }
+  ]
+}

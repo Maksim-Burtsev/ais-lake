@@ -105,12 +105,14 @@ function iconColor(
   ] as maplibregl.ExpressionSpecification;
 }
 
-/** ... and the same substitution on the silhouette: `${cls}-selected` is already in
- *  the atlas (hulls.ts STATES), so the double halo costs no new sprite. */
+/** ... and the same substitution on the silhouette: `${cls}${step}-selected` is
+ *  already in the atlas (hulls.ts STATES), so the double halo costs no new sprite.
+ *  It is `sym`, not `cls`: sprites are per length step, so the class alone no
+ *  longer names an image and a selected ship built from it would vanish. */
 const selectedIcon = (selection = NO_SELECTION): maplibregl.ExpressionSpecification => [
   'case',
   ['==', ['get', 'mmsi'], selection],
-  ['concat', ['get', 'cls'], '-selected'],
+  ['concat', ['get', 'sym'], '-selected'],
   ['get', 'icon'],
 ];
 
@@ -129,7 +131,7 @@ function applySelection(
 
 type VesselFeature = Feature<
   Point,
-  { mmsi: number; cog: number; state: string; icon: string; cls: string; px: number }
+  { mmsi: number; cog: number; state: string; icon: string; cls: string; sym: string }
 >;
 
 /** The wire row, resolved to a sprite: `sym` carries class + length step, and a
@@ -247,8 +249,7 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
     filter: ['!=', ['get', 'state'], 'silent'],
     layout: {
       ...common,
-      'icon-image': ['get', 'icon'],
-      'icon-size': ['/', ['get', 'px'], NOMINAL_L],
+      'icon-image': ['get', 'icon'], // drawn at its own step: icon-size stays 1
     },
     paint: {
       'icon-translate': SHADOW_OFFSET,
@@ -264,7 +265,6 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
     layout: {
       ...common,
       'icon-image': selectedIcon(selection),
-      'icon-size': ['/', ['get', 'px'], NOMINAL_L],
     },
     paint: { 'icon-color': iconColor(theme, selection) },
   });

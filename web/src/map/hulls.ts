@@ -6,6 +6,13 @@
  *  atlas as SDF-flagged alpha and `icon-color` tints them per state at paint time,
  *  which is what lets the grey-proof render exist at all.
  *
+ *  Every cell is drawn at the length it will be painted at, and `icon-size` is 1:
+ *  the beam floor and the 17-px detail gate are rules about RENDERED pixels, so a
+ *  single nominal-length image scaled down by MapLibre applied both of them at the
+ *  wrong size — a 14-px tanker came out 2.0 px in the beam instead of 2.6 and still
+ *  carried a deck hint. One image per (class, state, step) is what makes §5's
+ *  14-px test pass.
+ *
  *  ponytail: runtime canvas generation, not the 1024x768 PNG atlas the design
  *  calls for — same curves, one build step less. And a solid alpha channel flagged
  *  sdf:true is not a real distance field: fine at these sizes, but if hull edges
@@ -15,47 +22,53 @@
 export const STEP = [10, 14, 18, 23, 28] as const;
 export const LOZ = [7, 9, 11] as const;
 
-export const CMETA: Record<string, { lb: number }> = {
-  tanker: { lb: 7 },
-  cargo: { lb: 6 },
-  ferry: { lb: 5 },
-  fishing: { lb: 3 },
-  tug: { lb: 2.5 },
-  hsc: { lb: 8 },
-  pleasure: { lb: 4.5 },
-  unknown: { lb: 4 },
+/** `steps` is the class's [first, last] length step — the browser half of
+ *  CLASS_STEPS in pipeline/ais_pipeline/refinery/symbology.py, which is the
+ *  authority. Every range there is contiguous, so a pair clamps as well as a set,
+ *  and the empty matrix cells stay empty: no 280 m fishing boat is ever drawn. */
+export const CMETA: Record<string, { lb: number; steps: readonly [number, number] }> = {
+  tanker: { lb: 7, steps: [2, 5] },
+  cargo: { lb: 6, steps: [2, 5] },
+  ferry: { lb: 5, steps: [1, 4] },
+  fishing: { lb: 3, steps: [1, 2] },
+  tug: { lb: 2.5, steps: [1, 2] },
+  hsc: { lb: 8, steps: [1, 3] },
+  pleasure: { lb: 4.5, steps: [1, 1] },
+  unknown: { lb: 4, steps: [1, 5] },
 };
 export const CLASSES = Object.keys(CMETA);
 export const STATES = ['anchored', 'moored', 'silent', 'selected'] as const;
 
-/** Every cell draws its hull at this length; `icon-size` scales it to the ship's
- *  own STEP. One image per (class, state) instead of one per (class, state, step). */
+/** Rung 1 has one lozenge for the whole fleet and `icon-size` still scales it:
+ *  class is deliberately unreadable there, so the erosion buys nothing back. */
 export const NOMINAL_L = 28;
-/** Half a cell, in CSS px: the widest decoration is the selected ring (l + 21) and
- *  the longest wake is ~31 px astern of a 28 px hull. */
-const HALF = 46;
 const PIXEL_RATIO = 2;
 
 /** Wake length comes from speed alone; three buckets, drawn at their midpoints. */
 const SOG_MIDPOINT = [2, 7, 14];
 export const sogBucket = (sog: number): number => (sog < 4 ? 0 : sog <= 10 ? 1 : 2);
+const wakeLen = (L: number, sog: number): number => Math.min(L * 3, sog * 2.2);
 
 /** `"tanker4"` + state -> the icon this ship draws with, the class it belongs to
- *  (F7 filters match on it) and the px its hull measures. A token we cannot read
- *  falls back to the unknown capsule. */
+ *  (F7 filters match on it) and the class+step key the selected-ship expression
+ *  rebuilds its own icon name from. A token we cannot read falls back to the
+ *  unknown capsule; a step outside the class's own range is clamped into it, the
+ *  same way symbology.py clamps, so the key always exists in the atlas. */
 export function iconOf(
   sym: string,
   state: string,
   sog: number,
-): { icon: string; cls: string; px: number } {
+): { icon: string; cls: string; sym: string } {
   const match = /^([a-z]+)([1-5])$/.exec(sym);
   const cls = match && CMETA[match[1]!] ? match[1]! : 'unknown';
-  const step = match && CMETA[match[1]!] ? Number(match[2]) : 2;
+  const [lo, hi] = CMETA[cls]!.steps;
+  const step = match && CMETA[match[1]!] ? Math.min(Math.max(Number(match[2]), lo), hi) : 2;
   const known = (STATES as readonly string[]).includes(state);
+  const key = `${cls}${step}`;
   return {
-    icon: known ? `${cls}-${state}` : `${cls}-u${sogBucket(sog)}`,
+    icon: known ? `${key}-${state}` : `${key}-u${sogBucket(sog)}`,
     cls,
-    px: STEP[step - 1]!,
+    sym: key,
   };
 }
 
@@ -107,10 +120,8 @@ export function lozD(L: number, B: number): string {
 
 /** The single deck hint of rung 2 (`detail()` at lvl 2). Drawn as an alpha cutout,
  *  so the hint reads as a hole in the tinted hull rather than a second colour —
- *  one channel is all the SDF atlas has.
- *  ponytail: gated on the cell's nominal 28 px hull, not the ship's own step, so a
- *  10 px vessel keeps its hint scaled down instead of losing it below the 17 px
- *  gate. Per-step images would fix that at 5x the atlas. */
+ *  one channel is all the SDF atlas has. Below 17 rendered px the outline does the
+ *  work alone (the frame's §3a rule), which now fires because `L` is the step. */
 function detail(ctx: CanvasRenderingContext2D, cls: string, L: number, B: number): void {
   const l = L / 2, b = B / 2;
   const R = (x: number, y: number, w: number, h: number, rx = 0) => {
@@ -140,8 +151,16 @@ function detail(ctx: CanvasRenderingContext2D, cls: string, L: number, B: number
 
 /** One cell. `state` is the five of SYMBOLOGY.md §2; each keeps its own shape cue,
  *  because colour is the first thing a deuteranope loses. */
-function draw(ctx: CanvasRenderingContext2D, cls: string, state: string, sog: number): void {
-  const L = NOMINAL_L;
+function draw(
+  ctx: CanvasRenderingContext2D,
+  cls: string,
+  L: number,
+  state: string,
+  sog: number,
+): void {
+  // the frame's own floor, at the size it draws: max(2.6, px / lb). A 14-px tanker
+  // is 2.6 px in the beam, not 14/7 = 2.0 — thin classes are exactly the ones that
+  // stop being nameable when the floor is applied to some other length.
   const B = Math.max(2.6, L / (cls === 'loz' ? 2.8 : CMETA[cls]!.lb));
   const l = L / 2;
   const hull = new Path2D(cls === 'loz' ? lozD(L, B) : hullD(cls, L, B));
@@ -151,7 +170,7 @@ function draw(ctx: CanvasRenderingContext2D, cls: string, state: string, sog: nu
   ctx.lineCap = 'butt';
 
   if (state === 'underway') { // the wake: a ribbon astern, length from speed alone
-    const wl = Math.min(L * 3, sog * 2.2);
+    const wl = wakeLen(L, sog);
     ctx.beginPath();
     ctx.moveTo(-B * .38, l);
     ctx.lineTo(B * .38, l);
@@ -215,25 +234,50 @@ function draw(ctx: CanvasRenderingContext2D, cls: string, state: string, sog: nu
   ctx.globalCompositeOperation = 'source-over';
 }
 
-/** Every sprite the map needs: 8 classes × (3 wake buckets + 4 states) + the rung-1
- *  lozenge. Keys are the `icon` property MapCanvas puts on each feature. */
+/** Half a cell, in CSS px. Sized to what THIS cell draws, not to the worst case in
+ *  the atlas: the selected halo reaches l + 21, the silent pulse l + 14, the swing
+ *  ring l + max(4, .3L), a wake runs its own length astern, and a moored or bare
+ *  hull needs nothing past the outline. + 2 covers the widest stroke. Sizing every
+ *  cell to the largest of those costs ~2.5x the bytes, all of them transparent. */
+function halfOf(L: number, state: string, sog: number): number {
+  const reach =
+    state === 'underway' ? wakeLen(L, sog)
+    : state === 'selected' ? 21
+    : state === 'silent' ? 14
+    : state === 'anchored' ? Math.max(4, L * 0.3)
+    : 0;
+  return Math.ceil(L / 2 + reach + 2);
+}
+
+/** Every sprite the map needs: one per (class, step, variant) over the 25 class ×
+ *  step cells the matrix allows (of 40 — the empty ones are honest), variants being
+ *  the 3 wake buckets + 4 states, plus the bare fill §5's acceptance stand prints
+ *  and the rung-1 lozenge. 201 images, 7.7 MB of ImageData, ~7 ms to build.
+ *  Keys are the `icon` property MapCanvas puts on each feature. */
 export function sprites(): Record<string, ImageData> {
-  const size = HALF * 2 * PIXEL_RATIO;
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!; // 57 readbacks
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   const out: Record<string, ImageData> = {};
-  const cell = (key: string, cls: string, state: string, sog = 0) => {
-    ctx.setTransform(PIXEL_RATIO, 0, 0, PIXEL_RATIO, HALF * PIXEL_RATIO, HALF * PIXEL_RATIO);
-    ctx.clearRect(-HALF, -HALF, HALF * 2, HALF * 2);
-    draw(ctx, cls, state, sog);
+  const cell = (key: string, cls: string, L: number, state: string, sog = 0) => {
+    const half = halfOf(L, state, sog);
+    const size = half * 2 * PIXEL_RATIO;
+    canvas.width = canvas.height = size; // resizing clears; no clearRect needed
+    ctx.setTransform(PIXEL_RATIO, 0, 0, PIXEL_RATIO, half * PIXEL_RATIO, half * PIXEL_RATIO);
+    draw(ctx, cls, L, state, sog);
     out[key] = ctx.getImageData(0, 0, size, size);
   };
   for (const cls of CLASSES) {
-    SOG_MIDPOINT.forEach((sog, i) => cell(`${cls}-u${i}`, cls, 'underway', sog));
-    for (const state of STATES) cell(`${cls}-${state}`, cls, state);
+    const [lo, hi] = CMETA[cls]!.steps;
+    for (let step = lo; step <= hi; step++) {
+      const L = STEP[step - 1]!;
+      SOG_MIDPOINT.forEach((sog, i) => cell(`${cls}${step}-u${i}`, cls, L, 'underway', sog));
+      for (const state of STATES) cell(`${cls}${step}-${state}`, cls, L, state);
+      // no state cue, no wake — the flat fill the 14-px test is judged on. Nothing
+      // in the running map asks for it; the acceptance spec does.
+      cell(`${cls}${step}-plain`, cls, L, 'plain');
+    }
   }
-  cell('loz', 'loz', 'plain');
+  cell('loz', 'loz', NOMINAL_L, 'plain');
   return out;
 }
 

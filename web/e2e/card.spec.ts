@@ -42,7 +42,7 @@ interface Feat {
 const SELECTED = (mmsi: number) => [
   'case',
   ['==', ['get', 'mmsi'], mmsi],
-  ['concat', ['get', 'cls'], '-selected'],
+  ['concat', ['get', 'sym'], '-selected'], // class + length step: sprites are per-step
   ['get', 'icon'],
 ];
 

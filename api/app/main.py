@@ -22,6 +22,7 @@ from .limits import clamp_interval
 from .live import Deltas, live_socket, subscribe_forever
 from .map import SnapshotUnavailable, parse_bbox, snapshot_payload
 from .regions import regions_payload
+from .search import search_payload
 from .ships import CardUnavailable, ShipNotFound, card_for
 from .status import build_status
 
@@ -124,6 +125,13 @@ async def regions() -> dict[str, Any]:
     """F6: the picker's seas and straits with a live count each. Never 503s —
     Redis down means every count is null and the panel shows "—"."""
     return await regions_payload(runtime.redis)
+
+
+@app.get("/v1/search")
+async def search(q: str = "") -> dict[str, Any]:
+    """F5: ships, ports and seas for the top bar's dropdown. Never 503s — a store
+    that is gone costs its own group and the panel says what it still knows."""
+    return await search_payload(runtime.clickhouse, runtime.redis, q)
 
 
 @app.get("/v1/ships/{key}")

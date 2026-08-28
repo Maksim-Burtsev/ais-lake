@@ -40,6 +40,11 @@ interface LiveStore {
    *  fleet it already holds; the count line reads it. */
   silent: number;
   setSilent: (silent: number) => void;
+  /** F5 — the search panel is open, so the chips step back to .25 (the frame
+   *  dims them). Ephemeral like the rest of this store: it must not reach the
+   *  address bar, and one boolean does not earn a store of its own. */
+  searchOpen: boolean;
+  setSearchOpen: (searchOpen: boolean) => void;
 }
 
 export const useLiveStore = create<LiveStore>((set) => ({
@@ -47,6 +52,8 @@ export const useLiveStore = create<LiveStore>((set) => ({
   setStatus: (status) => set({ status }),
   silent: 0,
   setSilent: (silent) => set({ silent }),
+  searchOpen: false,
+  setSearchOpen: (searchOpen) => set({ searchOpen }),
 }));
 
 const RETRY_BASE_MS = 1_000;

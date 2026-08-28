@@ -73,6 +73,22 @@ const FRAME_EXTRAS = {
     'chrome-picker-rule': '#16283A',
     'chrome-picker-gold': '#E8B25C', // "Straits" header + the active row's rail
     'chrome-picker-active-fill': 'rgba(232,178,92,.1)',
+    // F5 search :: "Search open" (5b) + "Batch 4 Entry and States" :: "Search
+    // with nothing to show" (8c). The panel itself reuses the picker's chrome —
+    // same fill, border, shadow, eyebrow and highlight rail, measured identical.
+    'chrome-search-focus': '#E8B25C', // focused field border, magnifier, caret
+    'chrome-search-focus-fill': 'rgba(232,178,92,.06)',
+    'chrome-search-text': '#F2EADB', // what you typed
+    'chrome-search-sub': '#9DB4C2', // row subtitle + the empty state's paragraph
+    'chrome-search-hull': '#EAF2F7', // row silhouette, under way
+    'chrome-search-hull-still': '#C6D8E2', // row silhouette, stopped
+    'chrome-search-sea-mark': '#5FDCC9', // the 8×8 square in a sea row
+    // trailing metric, one colour per state (5b + "Batch 6" :: 10a)
+    'chrome-search-underway': '#5FDCC9',
+    'chrome-search-anchored': '#8FB8CC',
+    'chrome-search-silent': '#FF6A52',
+    'chrome-search-moored': '#FFB454',
+    'chrome-search-empty-rule': '#14242F', // between TRY INSTEAD rows
     // F8 ship card :: "Night Passage · 1440 × 900" (2c) + "Mobile · ship tapped" (5g)
     'chrome-card-fill': 'rgba(10,22,32,.94)',
     'chrome-card-sheet-fill': '#0A1620', // the mobile sheet is opaque, not a panel
@@ -129,6 +145,19 @@ const FRAME_EXTRAS = {
     'chrome-picker-rule': '#DFD5BE',
     'chrome-picker-gold': '#B87F3A', // == color.day.gold
     'chrome-picker-active-fill': 'rgba(184,127,58,.12)',
+    // F5 search — the same panel in the day palette (no day frame for it either).
+    'chrome-search-focus': '#B87F3A', // == color.day.gold
+    'chrome-search-focus-fill': 'rgba(184,127,58,.1)',
+    'chrome-search-text': '#0E2231',
+    'chrome-search-sub': '#5C6B74',
+    'chrome-search-hull': '#0C1D28',
+    'chrome-search-hull-still': '#5C6B74',
+    'chrome-search-sea-mark': '#0B5E7A',
+    'chrome-search-underway': '#0B5E7A',
+    'chrome-search-anchored': '#5C6B74',
+    'chrome-search-silent': '#D8361F', // == color.day.signal
+    'chrome-search-moored': '#B87F3A',
+    'chrome-search-empty-rule': '#DFD5BE',
     // F8 ship card :: "Blue Marble day" hero card, re-measured at the 1440 geometry
     'chrome-card-fill': '#FBF6EA',
     'chrome-card-sheet-fill': '#FBF6EA',

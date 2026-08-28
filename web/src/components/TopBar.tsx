@@ -1,14 +1,13 @@
 import { useLiveStore } from '../state/live';
 import { REFRESH, useUrlStore } from '../state/url';
 import { RegionPicker } from './RegionPicker';
+import { Search } from './Search';
 import { ThemeToggle } from './ThemeToggle';
 
 /** S1 top bar — docs/design/"ais-lake MVP Batch 1 Map Shell.dc.html"
  *  :: "First visit" / "First visit · Blue Marble day".
- *  Search is still a visual stub: correct copy and geometry, no behaviour behind
- *  it yet. Refresh (F1) and the region picker (F6) are live. */
+ *  Search (F5), refresh (F1) and the region picker (F6) are live. */
 
-const SEARCH_PLACEHOLDER = 'Search a ship, a port, a sea…';
 const SIGN_IN_LABEL = 'Sign in';
 
 /** Anonymous is the only tier until sign-in lands (M6); faster cadences are
@@ -20,34 +19,6 @@ function Caret() {
     <span aria-hidden="true" className="text-[10px] text-[var(--chrome-caret)]">
       ▾
     </span>
-  );
-}
-
-function SearchStub() {
-  return (
-    <div className="flex h-[32px] max-w-[360px] flex-1 items-center gap-[9px] border border-[var(--chrome-hairline)] bg-[var(--chrome-search-fill)] px-[11px]">
-      <svg width="13" height="13" viewBox="0 0 14 14" className="block flex-none" aria-hidden="true">
-        <circle
-          cx="5.8"
-          cy="5.8"
-          r="4.4"
-          fill="none"
-          stroke="var(--chrome-search-ink)"
-          strokeWidth="1.3"
-        />
-        <line
-          x1="9.2"
-          y1="9.2"
-          x2="12.6"
-          y2="12.6"
-          stroke="var(--chrome-search-ink)"
-          strokeWidth="1.3"
-        />
-      </svg>
-      <span className="text-[13px] text-[var(--chrome-search-placeholder)]">
-        {SEARCH_PLACEHOLDER}
-      </span>
-    </div>
   );
 }
 
@@ -107,7 +78,7 @@ export function TopBar() {
       <div className="font-display text-[21px] font-medium whitespace-nowrap text-[var(--chrome-logo-ink)]">
         ais<span className="text-[var(--chrome-logo-dot)]">·</span>lake
       </div>
-      <SearchStub />
+      <Search />
       <div className="flex-1" />
       <RegionPicker />
       <Refresh />

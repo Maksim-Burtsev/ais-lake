@@ -11,6 +11,7 @@ from ais_pipeline.refinery.symbology import UNKNOWN_SYM, class_of, sym
         (30, "fishing"),
         (31, "tug"), (33, "tug"), (35, "tug"),
         (36, "pleasure"), (37, "pleasure"),
+        (38, "unknown"), (39, "unknown"),  # reserved, not pleasure craft
         (40, "hsc"), (49, "hsc"),
         (50, "tug"), (52, "tug"), (59, "tug"),
         (60, "ferry"), (69, "ferry"),

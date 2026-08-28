@@ -103,6 +103,19 @@ test('filters · a class chip lives in the URL and dims everything else', async 
     .toEqual(['case', ['==', ['get', 'cls'], 'tanker'], 1, 0.22]);
 });
 
+test('filters · a filter survives the theme swap that rebuilds every layer', async ({ page }) => {
+  const live = await boot(page, '&f=tankers');
+  await seaFills(page, live, [['tanker3', 'underway'], ['cargo3', 'underway']]);
+  const tankers = ['case', ['==', ['get', 'cls'], 'tanker'], 1, 0.22];
+  expect(await hullOpacity(page)).toEqual(tankers);
+
+  // setStyle wipes sources and layers: the rebuild must re-apply the filter, not
+  // silently come back at full opacity for the whole fleet.
+  await page.getByRole('button', { name: /Switch to daylight/ }).click();
+  await expect(page).toHaveURL(/[?&]theme=day/);
+  await expect.poll(() => hullOpacity(page), { timeout: 30_000 }).toEqual(tankers);
+});
+
 test('filters · Recently silent brights the silents and counts them', async ({ page }) => {
   const live = await boot(page);
   await seaFills(page, live, [['cargo3', 'underway']]);

@@ -23,6 +23,9 @@ logger = logging.getLogger("map")
 
 REGION = os.environ.get("REGION_SLUG", "north-sea")
 UNKNOWN_SYM = "unknown2"  # a field from before the sym token existed
+# [ts, lat, lon, sog, cog, state] (+ sym, appended later). live.py reads the same
+# schema off the pub/sub and imports this, so the two readers cannot drift apart.
+FRAME_FIELDS = (6, 7)
 
 
 class RedisClient(Protocol):
@@ -69,10 +72,18 @@ async def _rows(client: RedisClient | None) -> Iterator[list[Any]]:
     def decode() -> Iterator[list[Any]]:
         for mmsi, field in raw.items():
             try:
-                _ts, lat, lon, sog, cog, state, *rest = json.loads(field)
+                decoded = json.loads(field)
                 key = int(mmsi)
             except (ValueError, TypeError):
                 continue  # a half-written or future-shaped field/key is skipped, not fatal
+            # a dict would unpack into its key names, so demand the wire's own shape
+            if not isinstance(decoded, list) or len(decoded) not in FRAME_FIELDS:
+                continue
+            _ts, lat, lon, sog, cog, state, *rest = decoded
+            # lat/lon are compared against the bbox by every caller; text there would
+            # blow up a count or a cull. Same guard live.py applies to its frames.
+            if not isinstance(lat, int | float) or not isinstance(lon, int | float):
+                continue
             yield [key, lat, lon, cog, sog, state, rest[0] if rest else UNKNOWN_SYM]
 
     return decode()

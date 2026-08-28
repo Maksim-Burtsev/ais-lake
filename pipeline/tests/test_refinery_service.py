@@ -167,6 +167,27 @@ async def test_static_message_teaches_the_sprite_token() -> None:
     assert syms == {244660000: "tanker4", 244660001: "unknown2"}
 
 
+async def test_static_teaches_the_token_even_when_its_position_is_a_dup() -> None:
+    """A moored ship: position first, then the static at the same second and spot.
+    The static's synthetic position dedups away — the class must not go with it."""
+    refinery = Refinery(Settings(_env_file=None), clock=lambda: 0.0)
+    refinery.handle_parsed(Parsed(position=row(nav_status=5, sog=0.0)))
+    refinery.handle(json.dumps({
+        "MessageType": "ShipStaticData",
+        "MetaData": {"MMSI": 244660000, "latitude": 52.0, "longitude": 4.0,
+                     "time_utc": "2026-08-26 12:00:00.0 +0000 UTC"},
+        "Message": {"ShipStaticData": {"Type": 80, "Dimension": {"A": 150, "B": 60}}},
+    }), T0)
+    refinery.handle_parsed(Parsed(position=row(nav_status=5, sog=0.0,
+                                               ts=T0 + timedelta(minutes=1))))
+
+    lake, live = FakeLake(), FakeLive()
+    await refinery.flush(lake, live)
+    assert refinery.counters.deduped == 1  # the static's position really was a dup
+    assert [r.sym for r in live.published] == ["tanker4"]
+    assert [r.ship_type for r in lake.statics] == [80]  # …and the identity row still lands
+
+
 async def test_one_latest_row_per_ship_per_flush() -> None:
     refinery = Refinery(Settings(_env_file=None), clock=lambda: 0.0)
     for step in range(3):  # 0.001 deg every 10 s — about 22 kn, no teleport

@@ -67,6 +67,32 @@ async def test_garbage_fields_are_skipped() -> None:
     assert payload["count"] == 1
 
 
+async def test_text_coordinates_are_skipped_everywhere_not_fatal() -> None:
+    """A non-numeric lat would blow up every bbox compare — snapshot AND counts."""
+    from app.map import counts_for
+    from app.regions import regions_payload
+
+    bad = {
+        "1": json.dumps([1789000000, "fifty-five", 3.2, 12.4, 87.0, "underway", "cargo3"]),
+        "244660000": NORTH_SEA["244660000"],
+    }
+    payload = await snapshot_payload(FakeRedis(bad))
+    assert payload["count"] == 1
+    assert await counts_for(FakeRedis(bad), [(2.0, 54.0, 5.0, 57.0)]) == [1]
+    counts = [r["count"] for r in (await regions_payload(FakeRedis(bad)))["regions"]]
+    assert any(c is not None for c in counts)  # counts still come back, no exception
+
+
+async def test_dict_and_overlong_fields_are_skipped() -> None:
+    junk = {
+        "1": json.dumps({"ts": 1, "lat": 55.1}),  # a dict would unpack into key names
+        "2": json.dumps([1789000000, 55.1, 3.2, 12.4, 87.0, "underway", "cargo3", "extra"]),
+        "3": NORTH_SEA["244660000"],
+    }
+    payload = await snapshot_payload(FakeRedis(junk))
+    assert payload["count"] == 1
+
+
 async def test_garbage_keys_are_skipped_not_fatal() -> None:
     mixed = {"ship-abc": NORTH_SEA["244660000"], "244660000": NORTH_SEA["244660000"]}
     payload = await snapshot_payload(FakeRedis(mixed))

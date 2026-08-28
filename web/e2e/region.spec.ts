@@ -28,15 +28,22 @@ const centre = (page: Page) =>
 
 const opener = (page: Page) => page.getByRole('button', { expanded: false }).first();
 
-async function boot(page: Page) {
+type Vessel = [number, number, number, number, number, string, string];
+
+/** `vessels` is asked per request with the bbox, so a test can hand the Kattegat
+ *  a different fleet than the launch view. */
+async function boot(page: Page, vessels: (bbox: number[]) => Vessel[] = () => [], query = '') {
   const sent: string[] = [];
   const snapshots: string[] = [];
   const live: { socket: WebSocketRoute | null } = { socket: null };
 
   await page.route('**/v1/regions', (route) => route.fulfill({ json: REGIONS }));
   await page.route('**/v1/map/snapshot*', (route) => {
-    snapshots.push(route.request().url());
-    return route.fulfill({ json: { region: 'north-sea', ts: 1, count: 0, vessels: [] } });
+    const url = route.request().url();
+    snapshots.push(url);
+    const box = (new URL(url).searchParams.get('bbox') ?? '').split(',').map(Number);
+    const rows = vessels(box);
+    return route.fulfill({ json: { region: 'north-sea', ts: 1, count: rows.length, vessels: rows } });
   });
   // React StrictMode mounts twice: the surviving client is the last to connect.
   await page.routeWebSocket('**/v1/live*', (ws) => {
@@ -44,41 +51,40 @@ async function boot(page: Page) {
     ws.onMessage((message) => sent.push(String(message)));
   });
 
-  await page.goto('/?theme=night');
+  await page.goto(`/?theme=night${query}`);
   await expect.poll(() => centre(page), { timeout: 30_000 }).not.toBeNull();
-  return { sent, snapshots };
+  return { sent, snapshots, live };
 }
 
 test('region picker · seas, straits, and a switch that re-centres and re-subscribes', async ({
   page,
 }) => {
-  const { sent, snapshots } = await boot(page);
+  const { sent } = await boot(page);
   const before = (await centre(page)) as number[];
 
   await opener(page).click();
-  const panel = page.getByRole('listbox', { name: 'Region' });
+  const panel = page.getByRole('group', { name: 'Region' });
   await expect(panel).toBeVisible();
   await expect(panel.getByText('SEAS')).toBeVisible();
-  await expect(panel.getByRole('option', { name: /North Sea/ })).toContainText('4,377');
+  await expect(panel.getByRole('button', { name: /North Sea/ })).toContainText('4,377');
   await expect(panel.getByText('Straits')).toBeVisible();
   await expect(panel.getByText('— live theatre')).toBeVisible();
 
   // a null count is the coming-soon row: listed, named, not pickable.
-  const soon = panel.getByRole('option', { name: /Baltic/ });
+  const soon = panel.getByRole('button', { name: /Baltic/ });
   await expect(soon).toContainText('coming soon');
   await expect(soon).toBeDisabled();
 
-  const snapshotsBefore = snapshots.length;
-  await panel.getByRole('option', { name: /Kattegat/ }).click();
+  await panel.getByRole('button', { name: /Kattegat/ }).click();
   await expect(panel).toBeHidden();
 
   // the URL is the state, and the map went there.
   await expect(page).toHaveURL(/[?&]region=Kattegat/);
   await expect.poll(() => centre(page)).not.toEqual(before);
 
-  // the snapshot for the new box is asked for straight away — not after the fly.
-  expect(snapshots.length).toBeGreaterThan(snapshotsBefore);
-
+  // No snapshot is due here: from the launch view the padded box already covers the
+  // Kattegat, and moveend (the one fetch path) refetches only what it does not hold.
+  // What F6 actually promises is the re-subscribe below.
   // ... and the socket is re-subscribed to a bbox that covers the Kattegat.
   await expect
     .poll(
@@ -98,16 +104,88 @@ test('region picker · seas, straits, and a switch that re-centres and re-subscr
     .toBe(true);
 });
 
+const BASE_MMSI = 999000000; // outside the valid range: cannot collide with real data
+const SNAPSHOT_MMSI = BASE_MMSI + 9;
+
+interface Feat {
+  properties: { mmsi: number };
+  geometry: { coordinates: [number, number] };
+}
+interface Source {
+  serialize(): { data?: { features: Feat[] } };
+}
+const oursOnMap = (page: Page) =>
+  page.evaluate((base) => {
+    const map = (window as unknown as { __map?: { getSource(id: string): Source | undefined } })
+      .__map;
+    const feats = map?.getSource('vessels')?.serialize().data?.features ?? [];
+    return Object.fromEntries(
+      feats
+        .filter((f) => f.properties.mmsi >= base)
+        .map((f) => [f.properties.mmsi, f.geometry.coordinates[0]]),
+    );
+  }, BASE_MMSI);
+const mmsisOnMap = async (page: Page) => Object.keys(await oursOnMap(page)).sort();
+
+test('region picker · a snapshot fills in around the live fleet, it does not replace it', async ({
+  page,
+}) => {
+  // The Kattegat's snapshot carries a ship the deltas never mentioned AND a stale
+  // copy of a live one; the launch view starts empty (z=9 keeps its loaded box well
+  // short of the strait, so the pick really does fetch).
+  const { live } = await boot(
+    page,
+    (box) =>
+      (box[2] ?? 0) >= KATTEGAT[2]
+        ? [
+            [SNAPSHOT_MMSI, 56.8, 11.5, 45, 9, 'underway', 'cargo3'],
+            [BASE_MMSI, 55.0, 99.9, 45, 9, 'underway', 'tanker3'], // stale: must not win
+          ]
+        : [],
+    '&z=9&c=3.0000,55.0000',
+  );
+
+  // two ships arrive live first…
+  await expect
+    .poll(
+      async () => {
+        live.socket?.send(
+          JSON.stringify({
+            ts: 1,
+            interval: 30,
+            vessels: [
+              [BASE_MMSI, 55.0, 3.0, 45, 9, 'underway', 'tanker3'],
+              [BASE_MMSI + 1, 55.1, 3.1, 45, 9, 'underway', 'cargo3'],
+            ],
+          }),
+        );
+        return (await mmsisOnMap(page)).length;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(2);
+
+  await opener(page).click();
+  await page.getByRole('group', { name: 'Region' }).getByRole('button', { name: /Kattegat/ }).click();
+
+  // …and all three are on the map afterwards: merge by mmsi, never a wholesale swap.
+  await expect
+    .poll(() => mmsisOnMap(page), { timeout: 10_000 })
+    .toEqual([BASE_MMSI, BASE_MMSI + 1, SNAPSHOT_MMSI].map(String));
+  // the snapshot only filled the gap — it did not rewind the ship the socket owns.
+  expect((await oursOnMap(page))[BASE_MMSI]).toBe(3.0);
+});
+
 test('region picker · Escape and a click outside close it', async ({ page }) => {
   await boot(page);
 
   await opener(page).click();
-  await expect(page.getByRole('listbox', { name: 'Region' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Region' })).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('listbox', { name: 'Region' })).toBeHidden();
+  await expect(page.getByRole('group', { name: 'Region' })).toBeHidden();
 
   await opener(page).click();
-  await expect(page.getByRole('listbox', { name: 'Region' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Region' })).toBeVisible();
   await page.locator('header').getByText('ais').first().click();
-  await expect(page.getByRole('listbox', { name: 'Region' })).toBeHidden();
+  await expect(page.getByRole('group', { name: 'Region' })).toBeHidden();
 });

@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { mapView, type Bbox } from './MapCanvas';
+import { mapView, type Bbox } from '../map/view';
 import { useUrlStore } from '../state/url';
 
 interface Region {
@@ -30,8 +30,7 @@ function Row({ region, active, onPick }: { region: Region; active: boolean; onPi
   return (
     <button
       type="button"
-      role="option"
-      aria-selected={active}
+      aria-current={active}
       disabled={soon}
       onClick={onPick}
       className="flex h-[34px] w-full items-center justify-between border-0 border-l-2 bg-transparent px-[14px] text-left disabled:cursor-default"
@@ -64,14 +63,22 @@ export function RegionPicker() {
   const [data, setData] = useState<RegionsResponse | null>(null);
   const box = useRef<HTMLDivElement>(null);
 
-  // One fetch per session, on first open: the counts are a menu, not a feed.
+  // A fetch per open: the counts are a menu, but a menu from an hour ago is a lie.
+  // The previous data stays on screen while the new read is in flight — no flash.
   useEffect(() => {
-    if (!open || data) return;
+    if (!open) return;
     fetch('/v1/regions')
-      .then((r) => r.json() as Promise<RegionsResponse>)
-      .then(setData)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`regions ${r.status}`);
+        const body = (await r.json()) as RegionsResponse;
+        // A shape we don't recognise must not reach render: no rows beats a blank app.
+        if (!Array.isArray(body.regions) || !Array.isArray(body.straits)) {
+          throw new Error('regions: unexpected shape');
+        }
+        setData(body);
+      })
       .catch((error: unknown) => console.warn('regions:', error));
-  }, [open, data]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -99,12 +106,12 @@ export function RegionPicker() {
     <div ref={box} className="relative">
       <button
         type="button"
-        aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
         className="flex cursor-pointer items-center gap-[8px] border-0 border-r border-[var(--chrome-hairline)] bg-transparent p-0 pr-[18px] text-[13px] text-[var(--chrome-region-ink)]"
       >
-        {region}
+        {/* the frame's spacing is the gap PLUS a literal space (RegionStub had both) */}
+        {region}{' '}
         <span
           aria-hidden="true"
           className="text-[10px]"
@@ -114,9 +121,11 @@ export function RegionPicker() {
         </span>
       </button>
 
+      {/* plain buttons in a labelled group: listbox/option would be a lie with a
+          header, a divider and disabled rows in the same box. */}
       {open && (
         <div
-          role="listbox"
+          role="group"
           aria-label="Region"
           className="absolute top-[calc(100%+14px)] right-0 z-40 w-[300px] border"
           style={{

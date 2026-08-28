@@ -19,6 +19,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 maplibregl.setWorkerUrl(workerUrl);
 import { startLive, useLiveStore, type Vessel } from '../state/live';
 import { LOZ, NOMINAL_L, iconOf, sprites, SPRITE_PIXEL_RATIO } from '../map/hulls';
+import { mapView, type Bbox } from '../map/view';
 import tokens from '../theme/tokens.json';
 import { useUrlStore, type Center, type VesselFilter } from '../state/url';
 
@@ -106,16 +107,10 @@ const feature = ([mmsi, lat, lon, cog, sog, state, sym]: Vessel): VesselFeature 
   properties: { mmsi, cog, state, ...iconOf(sym ?? 'unknown2', state, sog) },
 });
 
-/** minLon,minLat,maxLon,maxLat — the api's bbox order, everywhere in this file. */
-export type Bbox = [number, number, number, number];
-
 function boundsOf(map: maplibregl.Map): Bbox {
   const b = map.getBounds();
   return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
 }
-
-const bboxOf = (map: maplibregl.Map): string =>
-  boundsOf(map).map((v) => v.toFixed(4)).join(',');
 
 /** A snapshot is fetched for rather more than the visible box, so a small pan
  *  costs nothing. Refetch only happens when the view leaves what was loaded. */
@@ -128,6 +123,11 @@ const pad = ([w, s, e, n]: Bbox): Bbox => {
     Math.min(180, e + dx), Math.min(90, n + dy),
   ];
 };
+/** The socket subscribes to the same padded box the snapshot loads, so the ships
+ *  in the margin ring keep getting deltas instead of going stale until the next pan. */
+const bboxOf = (map: maplibregl.Map): string =>
+  pad(boundsOf(map)).map((v) => v.toFixed(4)).join(',');
+
 const covers = (box: Bbox, [w, s, e, n]: Bbox): boolean =>
   box[0] <= w && box[1] <= s && box[2] >= e && box[3] >= n;
 
@@ -138,11 +138,6 @@ async function fetchVessels(bbox: Bbox, zoom: number): Promise<Vessel[]> {
   const { vessels } = (await response.json()) as { vessels: Vessel[] };
   return vessels;
 }
-
-/** F6 — the picker's handle on the one map in the app.
- *  ponytail: a module-level singleton, not context. There is exactly one
- *  MapCanvas; the day a second one exists, this becomes a context provider. */
-export const mapView: { goto: ((bbox: Bbox) => void) | null } = { goto: null };
 
 /** Sprites + source + layers. Re-run after every setStyle — a style swap wipes all
  *  of them, images included. Idempotent on live pieces: an existing source gets the
@@ -311,8 +306,13 @@ export function MapCanvas() {
 
     // ponytail: the fleet is never pruned — a long session accumulates every ship
     // ever panned over. Add an LRU when that memory actually hurts.
-    const upsert = (rows: Vessel[]) => {
-      for (const row of rows) fleet.set(row[0], feature(row));
+    const upsert = (rows: Vessel[], fillOnly = false) => {
+      for (const row of rows) {
+        // A snapshot is a point-in-time read and can be older than a delta already
+        // applied: it only fills ships we have never seen. Live deltas own updates.
+        if (fillOnly && fleet.has(row[0])) continue;
+        fleet.set(row[0], feature(row));
+      }
       recount();
     };
     const push = () => {
@@ -329,7 +329,7 @@ export function MapCanvas() {
       return fetchVessels(box, map.getZoom())
         .then((rows) => {
           if (mine !== generation) return; // a newer view already asked
-          upsert(rows);
+          upsert(rows, true);
           push();
         })
         .catch((error: unknown) => {
@@ -366,10 +366,10 @@ export function MapCanvas() {
       recount();
     });
 
-    // F6 — a region pick: fly there AND fetch its ships now, from the picked box
-    // rather than the camera, so the new sea is populated inside the animation.
+    // F6 — a region pick just flies: `moveend` fires at the end of the fly and is
+    // the single fetch path (and what re-subscribes the socket), so fetching here
+    // too only bought a second HGETALL whose answer was thrown away.
     mapView.goto = (bbox: Bbox) => {
-      void loadSnapshot(pad(bbox));
       map.fitBounds(bbox, { duration: 600 });
     };
 

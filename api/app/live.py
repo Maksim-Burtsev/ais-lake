@@ -29,14 +29,13 @@ from typing import Any, Protocol
 from starlette.websockets import WebSocketDisconnect
 
 from .limits import clamp_interval
-from .map import REGION, parse_bbox
+from .map import FRAME_FIELDS, REGION, parse_bbox
 
 logger = logging.getLogger("live")
 
 BBox = tuple[float, float, float, float]
 Frame = list[Any]
 
-FRAME_FIELDS = (6, 7)  # [mmsi, lat, lon, cog, sog, state] (+ sym, appended later)
 MAX_SHIPS = 50_000  # the launch region holds ~10k; the cap is a memory floor, not a policy
 RESUBSCRIBE_S = 2.0
 

@@ -114,6 +114,15 @@ class Refinery:
             self.counters.skipped_nonvessel += 1
             return
 
+        # Statics are identity, not position: a moored ship's synthetic position is
+        # a dup or out of the box half the time, and dropping the class with it left
+        # the sprite on unknown2 forever. Learn the token before any early return.
+        if parsed.static is not None:
+            self.statics.append(parsed.static)
+            self._sym[row.mmsi] = sym(
+                parsed.static.ship_type, parsed.static.dim_a, parsed.static.dim_b
+            )
+
         reason = self._validator.check(row, self.latest)
         if reason is not None:
             setattr(self.counters, reason.value, getattr(self.counters, reason.value) + 1)
@@ -125,11 +134,6 @@ class Refinery:
 
         self.counters.out += 1
         self.positions.append(row)
-        if parsed.static is not None:
-            self.statics.append(parsed.static)
-            self._sym[row.mmsi] = sym(
-                parsed.static.ship_type, parsed.static.dim_a, parsed.static.dim_b
-            )
         latest = self.latest.apply(row, self._sym.get(row.mmsi, UNKNOWN_SYM))
         self._dirty[latest.mmsi] = latest
 

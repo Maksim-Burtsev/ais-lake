@@ -35,6 +35,19 @@ async def test_dead_redis_keeps_the_picker_working_with_null_counts() -> None:
     assert all("bbox" in r and "slug" in r for r in payload["regions"])
 
 
+async def test_route_never_500s_when_redis_is_down() -> None:
+    from app.main import regions, runtime
+
+    original = runtime.redis
+    try:
+        runtime.redis = DeadRedis()  # type: ignore[assignment]
+        payload = await regions()
+    finally:
+        runtime.redis = original
+    assert payload["regions"] and payload["straits"]
+    assert set(by_name(payload).values()) == {None}
+
+
 def test_every_configured_bbox_is_one_the_api_would_accept() -> None:
     entries = [*REGIONS["seas"], *REGIONS["straits"]]
     assert REGIONS["straits"], "launch straits (Dover + Kattegat) must be configured"

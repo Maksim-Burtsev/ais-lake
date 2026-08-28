@@ -14,9 +14,12 @@ from app.live import Deltas, live_socket
 TICK = 0.01  # the tick the fake socket runs at; the wire cadence is clamp_interval's job
 
 
-def delta(mmsi: int, lat: float, lon: float, cog: float = 90.0, sog: float = 12.0) -> str:
-    """Exactly what refinery/redis_sink.live_delta publishes: cog BEFORE sog."""
-    return json.dumps([mmsi, lat, lon, cog, sog, "underway"])
+def delta(mmsi: int, lat: float, lon: float, cog: float = 90.0, sog: float = 12.0,
+          sym: str | None = "tanker4") -> str:
+    """Exactly what refinery/redis_sink.live_delta publishes: cog BEFORE sog.
+    `sym=None` is the six-element wire that shipped before the sprite token."""
+    frame = [mmsi, lat, lon, cog, sog, "underway"]
+    return json.dumps(frame if sym is None else [*frame, sym])
 
 
 Step = str | None | Callable[[], None]
@@ -71,9 +74,18 @@ def test_last_frame_per_ship_wins() -> None:
 def test_junk_payloads_are_skipped_not_fatal() -> None:
     deltas = Deltas()
     for junk in ("not json", "[1,2]", '{"mmsi":1}', '["x",55.0,3.0,90,12,"underway"]',
-                 '[1,"north",3.0,90,12,"underway"]'):
+                 '[1,"north",3.0,90,12,"underway"]',
+                 '[1,55.0,3.0,90,12,"underway","tanker4","extra"]'):
         deltas.apply(junk)
     assert len(deltas) == 0
+
+
+def test_both_wire_widths_are_accepted_and_the_sym_rides_through() -> None:
+    deltas = Deltas()
+    deltas.apply(delta(244660000, 55.0, 3.0))  # 7 elements
+    deltas.apply(delta(205344000, 51.9, 4.1, sym=None))  # 6, from before the token
+    _, frames = deltas.since(0)
+    assert {f[0]: f[6:] for f in frames} == {244660000: ["tanker4"], 205344000: []}
 
 
 def test_since_culls_by_bbox_and_advances_the_cursor() -> None:
@@ -121,7 +133,8 @@ async def test_every_tick_sends_a_frame_even_when_nothing_moved() -> None:
     ws = FakeWebSocket(lambda: deltas.apply(delta(244660000, 55.2, 3.0)), None, None)
     await live_socket(ws, deltas, available=True, interval=TICK)
     assert [f["vessels"] for f in ws.sent] == [
-        [[244660000, 55.2, 3.0, 90.0, 12.0, "underway"]],  # what moved since the snapshot
+        # what moved since the snapshot
+        [[244660000, 55.2, 3.0, 90.0, 12.0, "underway", "tanker4"]],
         [],  # the heartbeat: nothing moved, and the client can tell it is alive
         [],
     ]

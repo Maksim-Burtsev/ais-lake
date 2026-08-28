@@ -2,7 +2,7 @@
  *  viewport bbox and the cadence, and its health is what the LIVE dot shows.
  *
  *  Wire (api/app/live.py):
- *    server -> {"ts", "interval", "vessels": [[mmsi, lat, lon, cog, sog, state], …]}
+ *    server -> {"ts", "interval", "vessels": [[mmsi, lat, lon, cog, sog, state, sym], …]}
  *    client -> {"bbox": "minLon,minLat,maxLon,maxLat", "interval": 30}
  *  Empty frames arrive every tick on purpose — they are the heartbeat that
  *  separates "nothing moved" from "socket dead".
@@ -21,6 +21,7 @@ export type Vessel = [
   cog: number,
   sog: number,
   state: string,
+  sym?: string, // the sprite token, appended later: older frames stop at `state`
 ];
 
 interface Frame {

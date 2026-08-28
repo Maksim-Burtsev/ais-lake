@@ -131,6 +131,7 @@ class LatestRow:
     nav_status: int
     state: str
     sentence: str
+    sym: str = "unknown2"  # sprite token for the map wire — NOT a lake column
 
     def as_tuple(self) -> tuple[object, ...]:
         return (

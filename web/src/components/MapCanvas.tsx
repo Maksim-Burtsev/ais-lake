@@ -1,8 +1,11 @@
 /** The sea itself. MapLibre under the shell: basemap from /styles/{theme}.json,
  *  vessels from /v1/map/snapshot.
  *
- *  Rung 1 only (SYMBOLOGY.md §3): directional lozenges, LOZ = [7, 9, 11] px,
- *  heading + state and nothing else. Class silhouettes are rung 2 and a later task.
+ *  Rungs 1 and 2 (SYMBOLOGY.md §3). Below z9: directional lozenges, LOZ =
+ *  [7, 9, 11] px — heading + state, class deliberately unreadable. From z9: the
+ *  eight class silhouettes at STEP = [10…28] px, with the five states' shape cues
+ *  and a cast shadow. Rung 0 (density field) and rung 3 (true-scale footprints)
+ *  are not built yet — rung 2 simply continues above z12.
  */
 
 import { useEffect, useRef } from 'react';
@@ -15,63 +18,49 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 
 maplibregl.setWorkerUrl(workerUrl);
 import { startLive, type Vessel } from '../state/live';
+import { LOZ, NOMINAL_L, iconOf, sprites, SPRITE_PIXEL_RATIO } from '../map/hulls';
+import tokens from '../theme/tokens.json';
 import { useUrlStore, type Center } from '../state/url';
 
 /** North Sea + English Channel, the launch region (docs/design/FRAMES.md). */
 const DEFAULT_CENTER: Center = [3.0, 55.0];
 const DEFAULT_ZOOM = 5.5;
 
-const LOZENGE = 'vessel-lozenge';
 const SOURCE = 'vessels';
-const LAYER = 'vessels';
+const LOZ_LAYER = 'vessels-loz';
+const HULL_LAYER = 'vessels-hull';
+const SHADOW_LAYER = 'vessels-shadow';
+/** Rung 1 ends and rung 2 begins here (SYMBOLOGY.md §3). */
+const RUNG2_ZOOM = 9;
+/** `so = max(1.6, L * .09)` from the frame, frozen at the mid length step: the
+ *  shadow is one offset for the whole fleet, not a per-ship computation. */
+const SHADOW_OFFSET: [number, number] = [1.8, 2.2];
 
-/** SYMBOLOGY.md §3 rung 1 — three size steps, in px, across z6→z8. */
-const LOZ = [7, 9, 11] as const;
-const SPRITE_PX = 32; // the lozenge is drawn this long, icon-size scales it to LOZ
-
-/** colour = state (tokens.json color.<theme>.vessel). Rung 1 carries no class. */
-const STATE_COLOR: Record<'night' | 'day', Record<string, string>> = {
-  night: { underway: '#EAF2F7', anchored: '#C6D8E2', moored: '#FFC97E', silent: '#FF6A52' },
-  day: { underway: '#F2F6F8', anchored: '#DCE7EC', moored: '#FFC46A', silent: '#D8361F' },
-};
-
+/** colour = state (tokens.json color.<theme>.vessel); shape = class. */
 function iconColor(theme: 'night' | 'day'): maplibregl.ExpressionSpecification {
-  const c = STATE_COLOR[theme];
+  const c = tokens.color[theme].vessel;
   return [
     'match',
     ['get', 'state'],
-    'anchored', c.anchored,
-    'moored', c.moored,
+    'anchored', c['anchor.lit'],
+    'moored', c['moor.lit'],
     'silent', c.silent,
-    c.underway,
+    'selected', c.halo,
+    c['hull.lit'],
   ] as maplibregl.ExpressionSpecification;
 }
 
-/** One directional lozenge, nose up (icon-rotate turns it to cog).
- *  ponytail: a solid shape flagged sdf:true, not a real distance field — good
- *  enough at 7–11 px; the rung-2 task builds the proper SDF atlas. */
-function lozenge(): ImageData {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = SPRITE_PX;
-  const ctx = canvas.getContext('2d')!;
-  const w = SPRITE_PX * 0.34;
-  ctx.beginPath();
-  ctx.moveTo(SPRITE_PX / 2, 1); // nose
-  ctx.lineTo(SPRITE_PX / 2 + w / 2, SPRITE_PX * 0.66);
-  ctx.lineTo(SPRITE_PX / 2, SPRITE_PX - 1); // stern
-  ctx.lineTo(SPRITE_PX / 2 - w / 2, SPRITE_PX * 0.66);
-  ctx.closePath();
-  ctx.fillStyle = '#fff';
-  ctx.fill();
-  return ctx.getImageData(0, 0, SPRITE_PX, SPRITE_PX);
-}
+type VesselFeature = Feature<
+  Point,
+  { mmsi: number; cog: number; state: string; icon: string; px: number }
+>;
 
-type VesselFeature = Feature<Point, { mmsi: number; cog: number; state: string }>;
-
-const feature = ([mmsi, lat, lon, cog, , state]: Vessel): VesselFeature => ({
+/** The wire row, resolved to a sprite: `sym` carries class + length step, and a
+ *  row from before that token existed simply draws the unknown capsule. */
+const feature = ([mmsi, lat, lon, cog, sog, state, sym]: Vessel): VesselFeature => ({
   type: 'Feature',
   geometry: { type: 'Point', coordinates: [lon, lat] },
-  properties: { mmsi, cog, state },
+  properties: { mmsi, cog, state, ...iconOf(sym ?? 'unknown2', state, sog) },
 });
 
 /** The current viewport, in the api's bbox order. */
@@ -88,38 +77,77 @@ async function fetchVessels(map: maplibregl.Map): Promise<Vessel[]> {
   return vessels;
 }
 
-/** Sprite + source + layer. Re-run after every setStyle — a style swap wipes all three.
- *  Idempotent on live pieces: an existing source gets the data pushed (a theme swap can
- *  race the snapshot fetch), an existing layer gets its state colours repainted. */
+/** Sprites + source + layers. Re-run after every setStyle — a style swap wipes all
+ *  of them, images included. Idempotent on live pieces: an existing source gets the
+ *  data pushed (a theme swap can race the snapshot fetch), existing layers get their
+ *  state colours repainted. */
 function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: FeatureCollection) {
-  if (!map.hasImage(LOZENGE)) map.addImage(LOZENGE, lozenge(), { sdf: true });
+  if (!map.hasImage('loz')) {
+    for (const [name, image] of Object.entries(sprites())) {
+      map.addImage(name, image, { sdf: true, pixelRatio: SPRITE_PIXEL_RATIO });
+    }
+  }
   const source = map.getSource<maplibregl.GeoJSONSource>(SOURCE);
   if (source) {
     void source.setData(data); // resolves on render; nothing to do with it here
   } else {
     map.addSource(SOURCE, { type: 'geojson', data });
   }
-  if (map.getLayer(LAYER)) {
-    map.setPaintProperty(LAYER, 'icon-color', iconColor(theme));
+  if (map.getLayer(HULL_LAYER)) {
+    map.setPaintProperty(LOZ_LAYER, 'icon-color', iconColor(theme));
+    map.setPaintProperty(HULL_LAYER, 'icon-color', iconColor(theme));
+    map.setPaintProperty(SHADOW_LAYER, 'icon-color', tokens.color[theme].vessel.shadow);
     return;
   }
+
+  const common: maplibregl.SymbolLayerSpecification['layout'] = {
+    'icon-rotate': ['get', 'cog'],
+    'icon-rotation-alignment': 'map',
+    'icon-allow-overlap': true,
+    'icon-ignore-placement': true,
+  };
+
   map.addLayer({
-    id: LAYER,
+    id: LOZ_LAYER,
     type: 'symbol',
     source: SOURCE,
+    maxzoom: RUNG2_ZOOM,
     layout: {
-      'icon-image': LOZENGE,
-      'icon-rotate': ['get', 'cog'],
-      'icon-rotation-alignment': 'map',
-      'icon-allow-overlap': true,
-      'icon-ignore-placement': true,
-      'icon-size': [
-        'step',
-        ['zoom'],
-        LOZ[0] / SPRITE_PX,
-        7, LOZ[1] / SPRITE_PX,
-        8, LOZ[2] / SPRITE_PX,
-      ],
+      ...common,
+      'icon-image': 'loz',
+      'icon-size': ['step', ['zoom'],
+        LOZ[0] / NOMINAL_L, 7, LOZ[1] / NOMINAL_L, 8, LOZ[2] / NOMINAL_L],
+    },
+    paint: { 'icon-color': iconColor(theme) },
+  });
+  // the cast shadow: the same silhouette, offset and dimmed, under the hull.
+  // A silent ship throws none — it is a ghost, not a hull in the water.
+  map.addLayer({
+    id: SHADOW_LAYER,
+    type: 'symbol',
+    source: SOURCE,
+    minzoom: RUNG2_ZOOM,
+    filter: ['!=', ['get', 'state'], 'silent'],
+    layout: {
+      ...common,
+      'icon-image': ['get', 'icon'],
+      'icon-size': ['/', ['get', 'px'], NOMINAL_L],
+    },
+    paint: {
+      'icon-translate': SHADOW_OFFSET,
+      'icon-color': tokens.color[theme].vessel.shadow,
+      'icon-opacity': tokens.color[theme].vessel['shadow.opacity'],
+    },
+  });
+  map.addLayer({
+    id: HULL_LAYER,
+    type: 'symbol',
+    source: SOURCE,
+    minzoom: RUNG2_ZOOM,
+    layout: {
+      ...common,
+      'icon-image': ['get', 'icon'],
+      'icon-size': ['/', ['get', 'px'], NOMINAL_L],
     },
     paint: { 'icon-color': iconColor(theme) },
   });

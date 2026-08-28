@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from ais_pipeline.config import Settings
-from ais_pipeline.refinery.models import LatestRow, PositionRow, StaticRow
+from ais_pipeline.refinery.models import LatestRow, Parsed, PositionRow, StaticRow
 from ais_pipeline.refinery.redis_sink import latest_field, live_delta
 from ais_pipeline.refinery.service import Counters, Refinery
 from ais_pipeline.refinery.state import LatestStore, latest_from, sentence_for, state_of
@@ -84,8 +84,9 @@ def test_latest_store_ignores_out_of_order_fixes() -> None:
 def test_redis_payload_shapes() -> None:
     latest = latest_from(row(sog=8.74, nav_status=0))
     assert json.loads(latest_field(latest)) == [int(T0.timestamp()), 52.0, 4.0, 8.7, 90.0,
-                                                "underway"]
-    assert json.loads(live_delta(latest)) == [244660000, 52.0, 4.0, 90.0, 8.7, "underway"]
+                                                "underway", "unknown2"]
+    assert json.loads(live_delta(latest)) == [244660000, 52.0, 4.0, 90.0, 8.7, "underway",
+                                              "unknown2"]
 
 
 def test_counters_report_dedup_ratio() -> None:
@@ -147,6 +148,23 @@ async def test_static_message_writes_both_tables_once() -> None:
     assert [r.msg_type for r in lake.positions] == [5]
     assert [r.name for r in lake.statics] == ["EENDRACHT"]
     assert len(live.published) == 1
+
+
+async def test_static_message_teaches_the_sprite_token() -> None:
+    refinery = Refinery(Settings(_env_file=None), clock=lambda: 0.0)
+    refinery.handle_parsed(Parsed(position=row(mmsi=244660001)))  # no static yet
+    refinery.handle(json.dumps({
+        "MessageType": "ShipStaticData",
+        "MetaData": {"MMSI": 244660000, "latitude": 52.0, "longitude": 4.0,
+                     "time_utc": "2026-08-26 12:00:00.0 +0000 UTC"},
+        "Message": {"ShipStaticData": {"Type": 80, "Dimension": {"A": 150, "B": 60}}},
+    }), T0)
+    refinery.handle_parsed(Parsed(position=row(ts=T0 + timedelta(minutes=1))))
+
+    lake, live = FakeLake(), FakeLive()
+    await refinery.flush(lake, live)
+    syms = {r.mmsi: r.sym for r in live.published}
+    assert syms == {244660000: "tanker4", 244660001: "unknown2"}
 
 
 async def test_one_latest_row_per_ship_per_flush() -> None:

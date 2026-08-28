@@ -1,9 +1,11 @@
 """/v1/map/snapshot — every vessel the refinery knows about right now.
 
 The refinery's hot hash (`latest:{region}`) stores positional arrays to keep the
-wire cheap: [ts, lat, lon, sog, cog, state]. The map frame wants heading before
-speed, so the one job here is the transpose to [mmsi, lat, lon, cog, sog, state]
-(plus a bbox cull, so a harbour view doesn't ship the whole North Sea).
+wire cheap: [ts, lat, lon, sog, cog, state, sym]. The map frame wants heading
+before speed, so the one job here is the transpose to
+[mmsi, lat, lon, cog, sog, state, sym] (plus a bbox cull, so a harbour view
+doesn't ship the whole North Sea). `sym` is the sprite token; fields written
+before it existed are still six long and read as an unknown silhouette.
 
 Unlike /status.json this one does NOT degrade to an empty payload when Redis is
 gone: an empty sea reads as "no ships out there", which is a lie. No snapshot is
@@ -19,6 +21,7 @@ from typing import Any, Protocol
 logger = logging.getLogger("map")
 
 REGION = os.environ.get("REGION_SLUG", "north-sea")
+UNKNOWN_SYM = "unknown2"  # a field from before the sym token existed
 
 
 class RedisClient(Protocol):
@@ -58,7 +61,7 @@ async def snapshot_payload(
     vessels: list[list[Any]] = []
     for mmsi, field in raw.items():
         try:
-            _ts, lat, lon, sog, cog, state = json.loads(field)
+            _ts, lat, lon, sog, cog, state, *rest = json.loads(field)
             key = int(mmsi)
         except (ValueError, TypeError):
             continue  # a half-written or future-shaped field/key is skipped, not fatal
@@ -66,7 +69,7 @@ async def snapshot_payload(
             min_lon, min_lat, max_lon, max_lat = bbox
             if not (min_lon <= lon <= max_lon and min_lat <= lat <= max_lat):
                 continue
-        vessels.append([key, lat, lon, cog, sog, state])
+        vessels.append([key, lat, lon, cog, sog, state, rest[0] if rest else UNKNOWN_SYM])
 
     return {
         "region": REGION,

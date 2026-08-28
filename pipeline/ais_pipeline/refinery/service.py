@@ -25,6 +25,7 @@ from .models import LatestRow, Parsed, PositionRow, StaticRow
 from .parser import NotAVesselMessage, parse
 from .redis_sink import RedisSink
 from .state import LatestStore
+from .symbology import UNKNOWN_SYM, sym
 from .validate import Validator
 
 logger = logging.getLogger("refinery")
@@ -88,6 +89,9 @@ class Refinery:
         self.positions: list[PositionRow] = []
         self.statics: list[StaticRow] = []
         self._dirty: dict[int, LatestRow] = {}
+        # ponytail: unbounded, one short string per ship ever seen (~10k in the
+        # launch region). Bound it alongside LatestStore if a region ever needs it.
+        self._sym: dict[int, str] = {}
 
     @property
     def pending_rows(self) -> int:
@@ -123,7 +127,10 @@ class Refinery:
         self.positions.append(row)
         if parsed.static is not None:
             self.statics.append(parsed.static)
-        latest = self.latest.apply(row)
+            self._sym[row.mmsi] = sym(
+                parsed.static.ship_type, parsed.static.dim_a, parsed.static.dim_b
+            )
+        latest = self.latest.apply(row, self._sym.get(row.mmsi, UNKNOWN_SYM))
         self._dirty[latest.mmsi] = latest
 
     def take_batches(self) -> tuple[list[PositionRow], list[StaticRow], list[LatestRow]]:

@@ -3,8 +3,12 @@
 Both payloads are positional arrays, not objects — the map ships thousands of
 these per second and every key name would be paid for on the wire.
 
-  HSET    latest:{region}  {mmsi} -> [ts_epoch, lat, lon, sog, cog, state]
-  PUBLISH live:{region}            [mmsi, lat, lon, cog, sog, state]
+  HSET    latest:{region}  {mmsi} -> [ts_epoch, lat, lon, sog, cog, state, sym]
+  PUBLISH live:{region}            [mmsi, lat, lon, cog, sog, state, sym]
+
+`sym` is the sprite token ("tanker4" — class + length step, see symbology.py).
+It was appended last so readers written against the six-element wire keep
+working; every consumer accepts 6 or 7 elements.
 
 The window counters land here too (HSET status:refinery), so /status.json can
 read what the refinery is doing without touching the pipeline process.
@@ -31,6 +35,7 @@ def latest_field(row: LatestRow) -> str:
             round(row.sog, 1),
             round(row.cog, 1),
             row.state,
+            row.sym,
         ],
         separators=(",", ":"),
     )
@@ -45,6 +50,7 @@ def live_delta(row: LatestRow) -> str:
             round(row.cog, 1),
             round(row.sog, 1),
             row.state,
+            row.sym,
         ],
         separators=(",", ":"),
     )

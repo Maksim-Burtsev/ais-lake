@@ -5,6 +5,7 @@ score, never jargon (CLAUDE.md, copy voice).
 """
 
 from .models import LATEST_COLUMNS, LatestRow, PositionRow
+from .symbology import UNKNOWN_SYM
 from .validate import Fix
 
 __all__ = ["LATEST_COLUMNS", "LatestStore", "sentence_for", "state_of"]
@@ -38,7 +39,7 @@ def sentence_for(state: str, sog: float) -> str:
     return "Under way"
 
 
-def latest_from(row: PositionRow) -> LatestRow:
+def latest_from(row: PositionRow, sym: str = UNKNOWN_SYM) -> LatestRow:
     state = state_of(row.nav_status)
     return LatestRow(
         mmsi=row.mmsi,
@@ -51,6 +52,7 @@ def latest_from(row: PositionRow) -> LatestRow:
         nav_status=row.nav_status,
         state=state,
         sentence=sentence_for(state, row.sog),
+        sym=sym,
     )
 
 
@@ -67,13 +69,13 @@ class LatestStore:
         row = self._latest.get(mmsi)
         return None if row is None else Fix(ts=row.ts, lat=row.lat, lon=row.lon)
 
-    def apply(self, row: PositionRow) -> LatestRow:
+    def apply(self, row: PositionRow, sym: str = UNKNOWN_SYM) -> LatestRow:
         """Record a fix as the ship's latest. Out-of-order fixes never move it backwards.
 
         Returns the row that IS the ship's latest after this fix — an out-of-order
         fix returns the newer stored one, so sinks never publish stale state.
         """
-        latest = latest_from(row)
+        latest = latest_from(row, sym)
         prev = self._latest.get(row.mmsi)
         if prev is None or row.ts >= prev.ts:
             self._latest[row.mmsi] = latest

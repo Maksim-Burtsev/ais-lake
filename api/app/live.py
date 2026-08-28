@@ -12,7 +12,7 @@ sent too (~40 B) — without them a client cannot tell "nothing moved" from
 "socket dead", which is exactly what the LIVE dot has to show.
 
 The wire, both ways:
-  server -> {"ts": …, "interval": 10, "vessels": [[mmsi, lat, lon, cog, sog, state], …]}
+  server -> {"ts": …, "interval": 10, "vessels": [[mmsi, lat, lon, cog, sog, state, sym], …]}
   client -> {"bbox": "minLon,minLat,maxLon,maxLat", "interval": 30}
 
 The client message is a patch applied in place — no reconnect when the viewport
@@ -36,7 +36,7 @@ logger = logging.getLogger("live")
 BBox = tuple[float, float, float, float]
 Frame = list[Any]
 
-FRAME_FIELDS = 6  # [mmsi, lat, lon, cog, sog, state]
+FRAME_FIELDS = (6, 7)  # [mmsi, lat, lon, cog, sog, state] (+ sym, appended later)
 MAX_SHIPS = 50_000  # the launch region holds ~10k; the cap is a memory floor, not a policy
 RESUBSCRIBE_S = 2.0
 
@@ -69,7 +69,7 @@ class Deltas:
             frame = json.loads(raw)
         except (ValueError, TypeError):
             return  # a half-written or future-shaped payload is skipped, not fatal
-        if not isinstance(frame, list) or len(frame) != FRAME_FIELDS:
+        if not isinstance(frame, list) or len(frame) not in FRAME_FIELDS:
             return
         # lat/lon are compared against the bbox in since(); text there would blow up
         if not isinstance(frame[1], int | float) or not isinstance(frame[2], int | float):

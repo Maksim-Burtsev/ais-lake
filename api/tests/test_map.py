@@ -7,9 +7,12 @@ import pytest
 from app.map import SnapshotUnavailable, parse_bbox, snapshot_payload
 
 
-def field(ts: int, lat: float, lon: float, sog: float, cog: float, state: str) -> str:
-    """Exactly what refinery/redis_sink.latest_field writes: sog BEFORE cog."""
-    return json.dumps([ts, lat, lon, sog, cog, state])
+def field(ts: int, lat: float, lon: float, sog: float, cog: float, state: str,
+          sym: str | None = "cargo3") -> str:
+    """Exactly what refinery/redis_sink.latest_field writes: sog BEFORE cog.
+    `sym=None` is a field written before the sprite token existed."""
+    row = [ts, lat, lon, sog, cog, state]
+    return json.dumps(row if sym is None else [*row, sym])
 
 
 class FakeRedis:
@@ -34,9 +37,15 @@ NORTH_SEA = {
 async def test_field_order_is_transposed_to_cog_then_sog() -> None:
     payload = await snapshot_payload(FakeRedis(NORTH_SEA))
     vessels = {v[0]: v for v in payload["vessels"]}
-    assert vessels[244660000] == [244660000, 55.1, 3.2, 87.0, 12.4, "underway"]
+    assert vessels[244660000] == [244660000, 55.1, 3.2, 87.0, 12.4, "underway", "cargo3"]
     assert payload["count"] == 2
     assert payload["region"]
+
+
+async def test_six_element_fields_still_read_as_an_unknown_silhouette() -> None:
+    old = {"244660000": field(1789000000, 55.1, 3.2, 12.4, 87.0, "underway", sym=None)}
+    payload = await snapshot_payload(FakeRedis(old))
+    assert payload["vessels"] == [[244660000, 55.1, 3.2, 87.0, 12.4, "underway", "unknown2"]]
 
 
 async def test_bbox_culls_everything_outside() -> None:

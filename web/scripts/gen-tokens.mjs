@@ -55,6 +55,8 @@ const FRAME_EXTRAS = {
     'chrome-chip-border': '#1C3040',
     'chrome-chip-active-fill': '#E8B25C', // == color.night.gold
     'chrome-chip-active-ink': '#08151E',
+    'chrome-chip-silent-fill': '#FF6A52', // F7 active "Recently silent" chip
+    'chrome-chip-silent-ink': '#08151E',
     'chrome-bar-fill': 'rgba(10,22,32,.93)', // == color.night.panel
     'chrome-signin-ink': '#9DB4C2', // == color.night.text.mute
     'chrome-logo-dot': '#E8B25C',
@@ -76,6 +78,8 @@ const FRAME_EXTRAS = {
     'chrome-chip-border': '#C9BC9E',
     'chrome-chip-active-fill': '#0E2231',
     'chrome-chip-active-ink': '#FBF6EA',
+    'chrome-chip-silent-fill': '#FF6A52', // F7 — same coral in both themes
+    'chrome-chip-silent-ink': '#08151E',
     'chrome-bar-fill': 'rgba(251,246,234,.96)', // frame is .96, tokens day.panel is .94
     'chrome-sweep-track': '#DFD5BE',
     'chrome-sweep-fill': '#D8361F', // == color.day.signal

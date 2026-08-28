@@ -40,14 +40,23 @@ const PIXEL_RATIO = 2;
 const SOG_MIDPOINT = [2, 7, 14];
 export const sogBucket = (sog: number): number => (sog < 4 ? 0 : sog <= 10 ? 1 : 2);
 
-/** `"tanker4"` + state -> the icon this ship draws with, and the px its hull
- *  measures. A token we cannot read falls back to the unknown capsule. */
-export function iconOf(sym: string, state: string, sog: number): { icon: string; px: number } {
+/** `"tanker4"` + state -> the icon this ship draws with, the class it belongs to
+ *  (F7 filters match on it) and the px its hull measures. A token we cannot read
+ *  falls back to the unknown capsule. */
+export function iconOf(
+  sym: string,
+  state: string,
+  sog: number,
+): { icon: string; cls: string; px: number } {
   const match = /^([a-z]+)([1-5])$/.exec(sym);
   const cls = match && CMETA[match[1]!] ? match[1]! : 'unknown';
   const step = match && CMETA[match[1]!] ? Number(match[2]) : 2;
   const known = (STATES as readonly string[]).includes(state);
-  return { icon: known ? `${cls}-${state}` : `${cls}-u${sogBucket(sog)}`, px: STEP[step - 1]! };
+  return {
+    icon: known ? `${cls}-${state}` : `${cls}-u${sogBucket(sog)}`,
+    cls,
+    px: STEP[step - 1]!,
+  };
 }
 
 export function hullD(cls: string, L: number, B: number): string {

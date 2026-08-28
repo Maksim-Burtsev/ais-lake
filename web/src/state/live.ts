@@ -36,11 +36,17 @@ export type LiveStatus = 'live' | 'stale' | 'down';
 interface LiveStore {
   status: LiveStatus;
   setStatus: (status: LiveStatus) => void;
+  /** F7 — silent ships inside the current viewport. Counted by MapCanvas from the
+   *  fleet it already holds; the count line reads it. */
+  silent: number;
+  setSilent: (silent: number) => void;
 }
 
 export const useLiveStore = create<LiveStore>((set) => ({
   status: 'stale', // connecting: not proven alive, not known dead
   setStatus: (status) => set({ status }),
+  silent: 0,
+  setSilent: (silent) => set({ silent }),
 }));
 
 const RETRY_BASE_MS = 1_000;

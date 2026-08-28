@@ -17,10 +17,10 @@ import type { Feature, FeatureCollection, Point } from 'geojson';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 maplibregl.setWorkerUrl(workerUrl);
-import { startLive, type Vessel } from '../state/live';
+import { startLive, useLiveStore, type Vessel } from '../state/live';
 import { LOZ, NOMINAL_L, iconOf, sprites, SPRITE_PIXEL_RATIO } from '../map/hulls';
 import tokens from '../theme/tokens.json';
-import { useUrlStore, type Center } from '../state/url';
+import { useUrlStore, type Center, type VesselFilter } from '../state/url';
 
 /** North Sea + English Channel, the launch region (docs/design/FRAMES.md). */
 const DEFAULT_CENTER: Center = [3.0, 55.0];
@@ -35,6 +35,49 @@ const RUNG2_ZOOM = 9;
 /** `so = max(1.6, L * .09)` from the frame, frozen at the mid length step: the
  *  shadow is one offset for the whole fleet, not a per-ship computation. */
 const SHADOW_OFFSET: [number, number] = [1.8, 2.2];
+
+/** F7 — the coral pulse over every silent ship, `om-pulse` from the frame:
+ *  a 120-px ring scaling .26 -> 1 and fading .62 -> 0 over 3.6 s, twice, half a
+ *  period apart. Two layers, one rAF loop, radius + stroke opacity per frame. */
+const PULSE_LAYERS = ['vessels-pulse-a', 'vessels-pulse-b'] as const;
+const PULSE_MS = 3_600;
+const PULSE_R = 60;
+const PULSE_MIN = 0.26;
+const PULSE_OPACITY = 0.62;
+const pulseAt = (phase: number) => ({
+  r: PULSE_R * (PULSE_MIN + (1 - PULSE_MIN) * phase),
+  o: PULSE_OPACITY * (1 - phase),
+});
+
+/** F7 — a filter does not hide the rest of the fleet, it drops it to 22% so the
+ *  matches are the only thing alive on the water (the frame's own word). */
+const DIM = 0.22;
+const MATCH: Record<VesselFilter, maplibregl.ExpressionSpecification> = {
+  tankers: ['==', ['get', 'cls'], 'tanker'],
+  cargo: ['==', ['get', 'cls'], 'cargo'],
+  anchored: ['==', ['get', 'state'], 'anchored'],
+  silent: ['==', ['get', 'state'], 'silent'],
+};
+
+const iconOpacity = (
+  filter: VesselFilter | undefined,
+  base: number,
+): number | maplibregl.ExpressionSpecification =>
+  filter === undefined ? base : ['case', MATCH[filter], base, base * DIM];
+
+/** Dim + ring visibility, on layer creation and on every filter change. */
+function applyFilter(map: maplibregl.Map, filter: VesselFilter | undefined, theme: 'night' | 'day') {
+  map.setPaintProperty(LOZ_LAYER, 'icon-opacity', iconOpacity(filter, 1));
+  map.setPaintProperty(HULL_LAYER, 'icon-opacity', iconOpacity(filter, 1));
+  map.setPaintProperty(
+    SHADOW_LAYER,
+    'icon-opacity',
+    iconOpacity(filter, tokens.color[theme].vessel['shadow.opacity']),
+  );
+  for (const id of PULSE_LAYERS) {
+    map.setLayoutProperty(id, 'visibility', filter === 'silent' ? 'visible' : 'none');
+  }
+}
 
 /** colour = state (tokens.json color.<theme>.vessel); shape = class. */
 function iconColor(theme: 'night' | 'day'): maplibregl.ExpressionSpecification {
@@ -52,7 +95,7 @@ function iconColor(theme: 'night' | 'day'): maplibregl.ExpressionSpecification {
 
 type VesselFeature = Feature<
   Point,
-  { mmsi: number; cog: number; state: string; icon: string; px: number }
+  { mmsi: number; cog: number; state: string; icon: string; cls: string; px: number }
 >;
 
 /** The wire row, resolved to a sprite: `sym` carries class + length step, and a
@@ -93,12 +136,35 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
   } else {
     map.addSource(SOURCE, { type: 'geojson', data });
   }
+  const filter = useUrlStore.getState().filter;
   if (map.getLayer(HULL_LAYER)) {
     map.setPaintProperty(LOZ_LAYER, 'icon-color', iconColor(theme));
     map.setPaintProperty(HULL_LAYER, 'icon-color', iconColor(theme));
     map.setPaintProperty(SHADOW_LAYER, 'icon-color', tokens.color[theme].vessel.shadow);
+    for (const id of PULSE_LAYERS) {
+      map.setPaintProperty(id, 'circle-stroke-color', tokens.color[theme].vessel.silent);
+    }
+    applyFilter(map, filter, theme);
     return;
   }
+
+  // The pulses go under the fleet: a ring is the ground the ship stands on.
+  PULSE_LAYERS.forEach((id, i) => {
+    const { r, o } = pulseAt(i * 0.5);
+    map.addLayer({
+      id,
+      type: 'circle',
+      source: SOURCE,
+      filter: ['==', ['get', 'state'], 'silent'],
+      paint: {
+        'circle-radius': r,
+        'circle-color': 'rgba(0,0,0,0)',
+        'circle-stroke-color': tokens.color[theme].vessel.silent,
+        'circle-stroke-width': i === 0 ? 1.6 : 1,
+        'circle-stroke-opacity': o,
+      },
+    });
+  });
 
   const common: maplibregl.SymbolLayerSpecification['layout'] = {
     'icon-rotate': ['get', 'cog'],
@@ -151,6 +217,7 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
     },
     paint: { 'icon-color': iconColor(theme) },
   });
+  applyFilter(map, filter, theme);
 }
 
 export function MapCanvas() {
@@ -175,8 +242,52 @@ export function MapCanvas() {
       type: 'FeatureCollection',
       features: [...fleet.values()],
     });
+    // ponytail: rAF only while the silent chip is up AND something is silent —
+    // no silent ships today (the gap classifier lands with M3), so the loop
+    // simply never starts. Reduced motion gets the rings, frozen mid-pulse.
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let raf = 0;
+    const paintPulse = (t: number) => {
+      PULSE_LAYERS.forEach((id, i) => {
+        if (!map.getLayer(id)) return;
+        const { r, o } = pulseAt((t / PULSE_MS + i * 0.5) % 1);
+        map.setPaintProperty(id, 'circle-radius', r);
+        map.setPaintProperty(id, 'circle-stroke-opacity', o);
+      });
+    };
+    const tick = (t: number) => {
+      paintPulse(t);
+      raf = requestAnimationFrame(tick);
+    };
+    const syncPulse = () => {
+      const on =
+        !still &&
+        useUrlStore.getState().filter === 'silent' &&
+        useLiveStore.getState().silent > 0;
+      if (on && !raf) raf = requestAnimationFrame(tick);
+      if (!on && raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+    };
+
+    /** F7 count line: silent ships inside the viewport, from the fleet we already
+     *  hold — queryRenderedFeatures would only see what is currently painted. */
+    const recount = () => {
+      const bounds = map.getBounds();
+      let n = 0;
+      for (const f of fleet.values()) {
+        if (f.properties.state !== 'silent') continue;
+        const [lon, lat] = f.geometry.coordinates as [number, number];
+        if (bounds.contains([lon, lat])) n += 1;
+      }
+      useLiveStore.getState().setSilent(n);
+      syncPulse();
+    };
+
     const upsert = (rows: Vessel[]) => {
       for (const row of rows) fleet.set(row[0], feature(row));
+      recount();
     };
 
     // The socket does not wait for the basemap: a slow tile host must not stall
@@ -201,10 +312,18 @@ export function MapCanvas() {
     map.on('moveend', () => {
       const c = map.getCenter();
       useUrlStore.getState().patch({ zoom: map.getZoom(), center: [c.lng, c.lat] });
+      recount();
     });
 
     let painted = useUrlStore.getState().theme;
+    let filtered = useUrlStore.getState().filter;
     const unsubscribe = useUrlStore.subscribe((state) => {
+      if (state.filter !== filtered) {
+        filtered = state.filter;
+        if (map.getLayer(HULL_LAYER)) applyFilter(map, state.filter, state.theme);
+        if (still) paintPulse(PULSE_MS / 2);
+        syncPulse();
+      }
       if (state.theme === painted) return;
       painted = state.theme;
       map.setStyle(`/styles/${state.theme}.json`);
@@ -217,6 +336,7 @@ export function MapCanvas() {
     return () => {
       stopLive();
       unsubscribe();
+      if (raf) cancelAnimationFrame(raf);
       map.remove();
     };
   }, []);

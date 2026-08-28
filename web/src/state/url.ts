@@ -13,6 +13,10 @@ import { applyTheme, persistTheme, resolveTheme, type Theme } from './theme';
 
 export type Center = [lon: number, lat: number];
 
+/** F7 filter chips. Absent = "All ships" — the default needs no name in the URL. */
+export const VESSEL_FILTERS = ['tankers', 'cargo', 'anchored', 'silent'] as const;
+export type VesselFilter = (typeof VESSEL_FILTERS)[number];
+
 export interface UrlState {
   theme: Theme;
   region: string;
@@ -20,6 +24,7 @@ export interface UrlState {
   interval: number;
   zoom?: number;
   center?: Center;
+  filter?: VesselFilter;
 }
 
 /** Launch region. The frames say "Black Sea" — illustrative; launch is the
@@ -73,6 +78,12 @@ export const PARAMS: Params = {
       return lon === undefined || lat === undefined ? undefined : [lon, lat];
     },
     serialize: (value) => (value === undefined ? null : `${value[0].toFixed(4)},${value[1].toFixed(4)}`),
+  },
+  filter: {
+    param: 'f',
+    parse: (raw) =>
+      (VESSEL_FILTERS as readonly string[]).includes(raw) ? (raw as VesselFilter) : undefined,
+    serialize: (value) => value ?? null,
   },
 };
 

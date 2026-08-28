@@ -96,6 +96,8 @@
   --chrome-chip-border: #1C3040;
   --chrome-chip-active-fill: #E8B25C;
   --chrome-chip-active-ink: #08151E;
+  --chrome-chip-silent-fill: #FF6A52;
+  --chrome-chip-silent-ink: #08151E;
   --chrome-bar-fill: rgba(10,22,32,.93);
   --chrome-signin-ink: #9DB4C2;
   --chrome-logo-dot: #E8B25C;
@@ -167,6 +169,8 @@
   --chrome-chip-border: #C9BC9E;
   --chrome-chip-active-fill: #0E2231;
   --chrome-chip-active-ink: #FBF6EA;
+  --chrome-chip-silent-fill: #FF6A52;
+  --chrome-chip-silent-ink: #08151E;
   --chrome-bar-fill: rgba(251,246,234,.96);
   --chrome-sweep-track: #DFD5BE;
   --chrome-sweep-fill: #D8361F;

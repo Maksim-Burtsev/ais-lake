@@ -60,20 +60,40 @@ const MATCH: Record<VesselFilter, maplibregl.ExpressionSpecification> = {
   silent: ['==', ['get', 'state'], 'silent'],
 };
 
+/** The selected ship is never dimmed. `icon-opacity` does not affect hit-testing,
+ *  so she is pickable through any filter and her card opens with her full identity
+ *  while she sits at 22% on the water — and F10's "paste the URL in incognito ->
+ *  identical view" then hands someone a URL whose subject is nearly invisible.
+ *  With nothing selected the expression is exactly what it always was: the term is
+ *  there only when there is a selection to except. */
 const iconOpacity = (
   filter: VesselFilter | undefined,
   base: number,
-): number | maplibregl.ExpressionSpecification =>
-  filter === undefined ? base : ['case', MATCH[filter], base, base * DIM];
+  selection?: number,
+): number | maplibregl.ExpressionSpecification => {
+  if (filter === undefined) return base;
+  const match: maplibregl.ExpressionSpecification =
+    selection === undefined
+      ? MATCH[filter]
+      : ['any', ['==', ['get', 'mmsi'], selection], MATCH[filter]];
+  return ['case', match, base, base * DIM];
+};
 
-/** Dim + ring visibility, on layer creation and on every filter change. */
-function applyFilter(map: maplibregl.Map, filter: VesselFilter | undefined, theme: 'night' | 'day') {
-  map.setPaintProperty(LOZ_LAYER, 'icon-opacity', iconOpacity(filter, 1));
-  map.setPaintProperty(HULL_LAYER, 'icon-opacity', iconOpacity(filter, 1));
+/** Dim + ring visibility, on layer creation and on every filter change. Selection
+ *  rides along because the two write different properties on the same layers, and
+ *  a selection change under an active filter has to repaint the opacity too. */
+function applyFilter(
+  map: maplibregl.Map,
+  filter: VesselFilter | undefined,
+  theme: 'night' | 'day',
+  selection?: number,
+) {
+  map.setPaintProperty(LOZ_LAYER, 'icon-opacity', iconOpacity(filter, 1, selection));
+  map.setPaintProperty(HULL_LAYER, 'icon-opacity', iconOpacity(filter, 1, selection));
   map.setPaintProperty(
     SHADOW_LAYER,
     'icon-opacity',
-    iconOpacity(filter, tokens.color[theme].vessel['shadow.opacity']),
+    iconOpacity(filter, tokens.color[theme].vessel['shadow.opacity'], selection),
   );
   for (const id of PULSE_LAYERS) {
     map.setLayoutProperty(id, 'visibility', filter === 'silent' ? 'visible' : 'none');
@@ -123,6 +143,11 @@ function applySelection(
   theme: 'night' | 'day',
 ) {
   map.setLayoutProperty(HULL_LAYER, 'icon-image', selectedIcon(selection));
+  // The shadow is the same silhouette one step down-right, so it has to follow the
+  // hull into the `-selected` cell. That cell draws no wake (SYMBOLOGY.md §2 gives
+  // selected the double halo instead), and a shadow still drawing `-u{bucket}`
+  // leaves a ~31 px dark ribbon astern of a hull that no longer has a bright one.
+  map.setLayoutProperty(SHADOW_LAYER, 'icon-image', selectedIcon(selection));
   map.setPaintProperty(HULL_LAYER, 'icon-color', iconColor(theme, selection));
   // rung 1 keeps its lozenge — class is deliberately unreadable there — and only
   // takes the halo colour.
@@ -166,6 +191,9 @@ const bboxOf = (map: maplibregl.Map): string =>
 const covers = (box: Bbox, [w, s, e, n]: Bbox): boolean =>
   box[0] <= w && box[1] <= s && box[2] >= e && box[3] >= n;
 
+const inside = ([w, s, e, n]: Bbox, [lon, lat]: [number, number]): boolean =>
+  lon >= w && lon <= e && lat >= s && lat <= n;
+
 async function fetchVessels(bbox: Bbox, zoom: number): Promise<Vessel[]> {
   const query = `bbox=${bbox.map((v) => v.toFixed(4)).join(',')}&zoom=${zoom.toFixed(2)}`;
   const response = await fetch(`/v1/map/snapshot?${query}`);
@@ -197,7 +225,7 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
     for (const id of PULSE_LAYERS) {
       map.setPaintProperty(id, 'circle-stroke-color', tokens.color[theme].vessel.silent);
     }
-    applyFilter(map, filter, theme);
+    applyFilter(map, filter, theme, selection);
     return;
   }
 
@@ -249,7 +277,7 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
     filter: ['!=', ['get', 'state'], 'silent'],
     layout: {
       ...common,
-      'icon-image': ['get', 'icon'], // drawn at its own step: icon-size stays 1
+      'icon-image': selectedIcon(selection), // drawn at its own step: icon-size stays 1
     },
     paint: {
       'icon-translate': SHADOW_OFFSET,
@@ -268,7 +296,7 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
     },
     paint: { 'icon-color': iconColor(theme, selection) },
   });
-  applyFilter(map, filter, theme);
+  applyFilter(map, filter, theme, selection);
 }
 
 export function MapCanvas() {
@@ -329,6 +357,10 @@ export function MapCanvas() {
      *  One walk, two counters. This runs on every moveend AND every delta frame,
      *  so the O(fleet) tail is paid often enough that a second pass for the second
      *  number would be the whole cost again for nothing. */
+    // F11 — until something has actually answered there is no fleet to count, and
+    // "0 SHIPS" over a sea full of ships is precisely the lie /v1/regions returns a
+    // null rather than tell. A failed snapshot must read as "we cannot tell".
+    let answered = false;
     const recount = () => {
       const bounds = map.getBounds();
       let silent = 0;
@@ -341,13 +373,15 @@ export function MapCanvas() {
       }
       const live = useLiveStore.getState();
       live.setSilent(silent);
-      live.setShips(ships);
+      live.setShips(answered ? ships : null);
       syncPulse();
     };
 
-    // ponytail: the fleet is never pruned — a long session accumulates every ship
-    // ever panned over. Add an LRU when that memory actually hurts.
+    // A snapshot sweeps its own box (see `loadSnapshot`), which is what retires a
+    // ship and bounds this Map as a side effect. Ships outside every box ever
+    // loaded still accumulate; ponytail: an LRU when that memory actually hurts.
     const upsert = (rows: Vessel[], fillOnly = false) => {
+      answered = true; // rows from a read that worked: the count is knowable now
       for (const row of rows) {
         // A snapshot is a point-in-time read and can be older than a delta already
         // applied: it only fills ships we have never seen. Live deltas own updates.
@@ -367,9 +401,25 @@ export function MapCanvas() {
     const loadSnapshot = (box: Bbox) => {
       const mine = ++generation;
       loaded = box;
+      // What we hold as the request goes out. Anything that arrives on a delta
+      // while it is in flight is NEWER than the answer, so it is not a candidate
+      // for the sweep below and `fillOnly` still keeps its position.
+      const held = [...fleet.keys()];
       return fetchVessels(box, map.getZoom())
         .then((rows) => {
           if (mine !== generation) return; // a newer view already asked
+          // A snapshot is the whole truth for its box, so anything inside it that
+          // the response did not carry has aged past the server's 24 h cut: she
+          // stopped appearing in snapshots and stopped generating deltas, and left
+          // alone she stays on the water forever at her last position, counted by
+          // the number F11 puts on screen. Only inside the box that was loaded,
+          // and only on success — a failed read knows nothing about anybody.
+          const carried = new Set(rows.map((row) => row[0]));
+          for (const mmsi of held) {
+            if (carried.has(mmsi)) continue;
+            const at = fleet.get(mmsi)?.geometry.coordinates as [number, number] | undefined;
+            if (at && inside(box, at)) fleet.delete(mmsi);
+          }
           upsert(rows, true);
           push();
         })
@@ -435,11 +485,16 @@ export function MapCanvas() {
     const unsubscribe = useUrlStore.subscribe((state) => {
       if (state.selection !== chosen) {
         chosen = state.selection;
-        if (map.getLayer(HULL_LAYER)) applySelection(map, chosen, state.theme);
+        if (map.getLayer(HULL_LAYER)) {
+          applySelection(map, chosen, state.theme);
+          // opacity carries the selection too, so the ship whose card just opened
+          // does not stay dimmed under an active filter.
+          applyFilter(map, state.filter, state.theme, chosen);
+        }
       }
       if (state.filter !== filtered) {
         filtered = state.filter;
-        if (map.getLayer(HULL_LAYER)) applyFilter(map, state.filter, state.theme);
+        if (map.getLayer(HULL_LAYER)) applyFilter(map, state.filter, state.theme, state.selection);
         if (still) paintPulse(PULSE_MS / 2);
         syncPulse();
       }

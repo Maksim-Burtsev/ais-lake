@@ -40,11 +40,27 @@ interface Card {
   latest: { ts: number; sog: number; cog: number; state: string } | null;
 }
 
-/** Re-selecting a ship already read costs nothing. A session's cards are a few KB;
- *  ponytail: no eviction until that is measurably untrue. */
+/** Re-selecting a ship already read paints in the same frame, then re-reads. It is
+ *  a first frame, never the answer: the entry carries `latest` — a timestamp, a
+ *  speed and a state, all of which age — so a card kept from 12:00 would tell you
+ *  "AIS 4s AGO" at 12:08 about a ship that has crossed the map and may have
+ *  anchored while the hull under it was already repainted. The freshness is the
+ *  one promise the product rests on, so the fetch always goes out.
+ *  ponytail: no eviction. The problem here was time, not bytes, and it is the
+ *  re-read that fixes it; add an LRU only when a session's few KB measurably hurt. */
 const seen = new Map<number, Card>();
 
 const DASH = '—';
+
+/** Without this the shell IS the failure: name "—", "— · unknown flag · —", both
+ *  buttons dead — a card asserting we hold this vessel and know nothing about her,
+ *  drawn pixel-for-pixel the same as a card still loading. A typo'd ?sel=, a stale
+ *  share link and a ship aged out of the lake all land here. */
+type Failure = 'missing' | 'unreadable' | null;
+const FAILURE_COPY: Record<'missing' | 'unreadable', string> = {
+  missing: 'No ship with this number is in the lake.',
+  unreadable: 'We could not read her details just now.',
+};
 
 /** The frame's compact "AIS 8s AGO". It is a live map, so this keeps counting. */
 const age = (ms: number): string => {
@@ -59,10 +75,23 @@ const age = (ms: number): string => {
 const grouped = (mmsi: number) => String(mmsi).replace(/(\d{3})(?=\d)/g, '$1 ');
 
 /** Typography over the server's own words: the leading clause in the frame runs up
- *  to the first " at " or " — ", and every figure is set in mono. Both are FOUND in
- *  the sentence — none of it is written here. */
+ *  to the em dash, or to the first " at " when there is no dash, and every figure is
+ *  set in mono. Both are FOUND in the sentence — none of it is written here.
+ *
+ *  The dash wins because it is the sentence's own clause boundary. One `search`
+ *  over an alternation cannot express that — it returns the leftmost match, so
+ *  " at " always beat " — " and CLAUDE.md's own example, "Waited at anchor — 14
+ *  hours", bolded "Waited" alone.
+ *
+ *  The durable fix is not in this file: refinery/state.py composes the sentence and
+ *  already knows where its clause ends, so it should mark the boundary rather than
+ *  have the client re-derive prose structure it did not write. F8 says the sentence
+ *  is the server's, and this splitter is a second, undocumented contract with
+ *  sentence_for() — one that a sentence carrying neither delimiter ("Went silent
+ *  3 h ago") still loses, by setting the whole line bold. */
 function Sentence({ text }: { text: string }) {
-  const cut = text.search(/ at | — /);
+  const dash = text.indexOf(' — ');
+  const cut = dash === -1 ? text.search(/ at /) : dash;
   const head = cut === -1 ? text : text.slice(0, cut);
   return (
     <p className="mt-0 mb-0 text-[14px] leading-[1.58] text-[var(--chrome-card-sentence)] [text-wrap:pretty] max-[391px]:leading-[1.55]">
@@ -80,55 +109,75 @@ function Sentence({ text }: { text: string }) {
   );
 }
 
+/** Nothing selected, nothing to draw. The panel itself is keyed on the MMSI, so
+ *  picking another ship remounts it: every piece of per-ship state resets on its
+ *  own instead of being reset inside an effect, which is what React's own rule
+ *  about cascading renders is asking for. */
 export function ShipCard() {
   const selection = useUrlStore((s) => s.selection);
+  if (selection === undefined) return null;
+  return <Panel key={selection} mmsi={selection} />;
+}
+
+function Panel({ mmsi }: { mmsi: number }) {
   const patch = useUrlStore((s) => s.patch);
-  const [card, setCard] = useState<Card | null>(null);
+  // The cache is read during render, not in an effect: it is this ship's first
+  // frame, and null is the shell we draw from the MMSI alone while the read runs.
+  const [card, setCard] = useState<Card | null>(() => seen.get(mmsi) ?? null);
+  const [failure, setFailure] = useState<Failure>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (selection === undefined) {
-      setCard(null);
-      return;
-    }
-    const cached = seen.get(selection);
-    setCard(cached ?? null); // null = the shell, drawn from the MMSI while we read
-    if (cached) return;
     let alive = true;
-    fetch(`/v1/ships/${selection}`)
+    let status = 0; // 404 is a different sentence from a network that never answered
+    fetch(`/v1/ships/${mmsi}`)
       .then(async (response) => {
-        if (!response.ok) throw new Error(`ship ${response.status}`);
+        status = response.status;
+        if (!response.ok) throw new Error(`ship ${status}`);
         return (await response.json()) as Card;
       })
       .then((body) => {
-        seen.set(selection, body);
+        seen.set(mmsi, body);
         if (alive) setCard(body);
       })
-      .catch((error: unknown) => console.warn('ship card:', error));
+      .catch((error: unknown) => {
+        console.warn('ship card:', error);
+        if (!alive) return;
+        // Only when there is nothing to show: a card we already hold and merely
+        // failed to refresh still beats an apology over a ship we demonstrably have.
+        if (seen.has(mmsi)) return;
+        setFailure(status === 404 ? 'missing' : 'unreadable');
+      });
     return () => {
       alive = false;
     };
-  }, [selection]);
+  }, [mmsi]);
 
   // Escape closes, same idiom as the region picker. A click on the water closes it
   // too — that one is MapCanvas's, since only the map knows what was under the tap.
+  //
+  // The card is the outermost thing an Escape can close, so it takes the key only
+  // when nothing nearer wanted it: whoever consumes an Escape calls preventDefault
+  // (Search's dropdown, the region picker), and this listener stands down for an
+  // already-defaulted event. Precedence made explicit rather than left to the order
+  // two window listeners happened to be registered in — which is why closing the
+  // search dropdown used to strip ?sel= and take the card with it.
   useEffect(() => {
-    if (selection === undefined) return;
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') patch({ selection: undefined });
+      if (event.key === 'Escape' && !event.defaultPrevented) patch({ selection: undefined });
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [selection, patch]);
+  }, [patch]);
 
+  // The eyebrow counts up on its own. `now` starts at mount, and the panel is
+  // remounted per ship, so the first tick is never stale by more than a second.
   useEffect(() => {
     if (!card?.latest) return;
-    setNow(Date.now()); // the clock may have been sitting idle since the last card
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [card]);
 
-  if (selection === undefined) return null;
   const id = card?.identity;
   const fix = card?.latest;
 
@@ -160,11 +209,16 @@ export function ShipCard() {
       <div className="my-[15px] h-px bg-[var(--chrome-card-rule)] max-[391px]:hidden" />
       <div className="max-[391px]:mt-[14px]">
         {card?.sentence ? <Sentence text={card.sentence} /> : null}
+        {failure ? (
+          <p className="mt-0 mb-0 text-[14px] leading-[1.58] text-[var(--chrome-card-sentence)] [text-wrap:pretty]">
+            {FAILURE_COPY[failure]}
+          </p>
+        ) : null}
       </div>
 
       {/* the frame's mono facts row. Off the sheet entirely on mobile. */}
       <div className="mt-[15px] flex flex-wrap gap-x-[22px] gap-y-[6px] font-mono text-[10.5px] tracking-[0.06em] text-[var(--chrome-card-particulars)] max-[391px]:hidden">
-        <span>MMSI {grouped(selection)}</span>
+        <span>MMSI {grouped(mmsi)}</span>
         <span>DRAUGHT {id?.draught_m ? `${id.draught_m} m` : DASH}</span>
         {id?.destination ? <span>BOUND FOR {id.destination}</span> : null}
         {id?.eta ? <span>ETA {id.eta}</span> : null}

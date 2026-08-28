@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import time
-from collections.abc import Iterator
 from typing import Any, Protocol
 
 from .limits import MAX_VESSEL_AGE_S
@@ -28,6 +27,20 @@ UNKNOWN_SYM = "unknown2"  # a field from before the sym token existed
 # [ts, lat, lon, sog, cog, state] (+ sym, appended later). live.py reads the same
 # schema off the pub/sub and imports this, so the two readers cannot drift apart.
 FRAME_FIELDS = (6, 7)
+
+# ponytail: a process-local memo of the decoded hash, upgrade path is per-region
+# counters the refinery maintains (M3), which is where a count belongs anyway.
+# One HGETALL of ~23k fields plus a json.loads each is ~110 ms of SYNCHRONOUS
+# work after the await returns — loop-blocking latency for every other request in
+# the process — and three endpoints now pay it: the snapshot, /v1/regions, and
+# /v1/search's sea counts. The search box debounces at 120 ms, so typing "north"
+# fires several of them back to back.
+# 2 s because that is under the fastest cadence a client may ask for
+# (limits.json map_refresh_s.floor.free = 5 s): nobody can be served a frame
+# staler than the refresh they chose, and the refinery rewrites the hash
+# continuously, so reusing a two-second-old read is honest rather than cheap.
+MEMO_S = 2.0
+_memo: tuple[Any, float, list[list[Any]]] | None = None
 
 
 class RedisClient(Protocol):
@@ -58,35 +71,49 @@ def inside(bbox: tuple[float, float, float, float], lon: float, lat: float) -> b
     return min_lon <= lon <= max_lon and min_lat <= lat <= max_lat
 
 
-async def _rows(client: RedisClient | None) -> Iterator[list[Any]]:
+async def _rows(client: RedisClient | None) -> list[list[Any]]:
     """ONE HGETALL of the hot hash, decoded to [mmsi, lat, lon, cog, sog, state, sym].
 
     Every reader of the hash goes through here (snapshot + the region counts), so
     the skip-the-junk rules, the age cut and the field transpose live in exactly
-    one place.
+    one place. Memoised for MEMO_S — see the note on it.
     """
+    global _memo
     if client is None:
         raise SnapshotUnavailable("no redis connection")
+    # The memo keeps a strong reference to the client it was read from and
+    # compares by identity, so a reconnect (or a test's fake) can never be handed
+    # another connection's fleet.
+    if _memo is not None and _memo[0] is client and time.time() - _memo[1] < MEMO_S:
+        return _memo[2]
     try:
         raw = await client.hgetall(f"latest:{REGION}")
     except Exception as exc:
         logger.warning("snapshot unavailable: %s: %s", type(exc).__name__, exc)
         raise SnapshotUnavailable(str(exc)) from exc
 
+    # Read here, never carried across a memo hit: the cut measures against the
+    # wall clock at decode time, so a reused row is at worst MEMO_S past its own
+    # cut — two seconds inside a 24 h window.
     now = time.time()
+    rows = [
+        row
+        for mmsi, field in raw.items()
+        if (row := _decode(mmsi, field, now, MAX_VESSEL_AGE_S)) is not None
+    ]
+    _memo = (client, now, rows)
+    return rows
 
-    def decode() -> Iterator[list[Any]]:
-        for mmsi, field in raw.items():
-            row = _decode(mmsi, field, now)
-            if row is not None:
-                yield row
 
-    return decode()
-
-
-def _decode(mmsi: Any, field: Any, now: float) -> list[Any] | None:
+def _decode(mmsi: Any, field: Any, now: float, max_age: float | None) -> list[Any] | None:
     """One hash field -> [mmsi, lat, lon, cog, sog, state, sym], or None if it is
-    junk, from before the sym token, or too old to still count as live."""
+    junk or from before the sym token.
+
+    `max_age` is the liveness cut in seconds, or None for no cut at all. It is the
+    caller's call because it is a property of the QUESTION, not of the field: the
+    map and the counts mean live when they say live, while the card only wants the
+    sym token, which encodes class and size from static data and does not decay.
+    """
     try:
         decoded = json.loads(field)
         key = int(mmsi)
@@ -105,7 +132,9 @@ def _decode(mmsi: Any, field: Any, now: float) -> list[Any] | None:
     # "live" has to mean live. A text ts is unreadable, so it goes too.
     # ponytail: read-side cut only, the hash itself still grows without bound.
     # The HDEL sweep is refinery hygiene and deliberately not in this task.
-    if not isinstance(ts, int | float) or now - ts > MAX_VESSEL_AGE_S:
+    if not isinstance(ts, int | float):
+        return None
+    if max_age is not None and now - ts > max_age:
         return None
     return [key, lat, lon, cog, sog, state, rest[0] if rest else UNKNOWN_SYM]
 
@@ -117,6 +146,11 @@ async def row_for(client: RedisClient | None, mmsi: int) -> list[Any] | None:
     json.loads site is exactly how the two readers would drift apart. Unlike the
     snapshot this one does not raise when Redis is missing — a card without a
     sprite token only loses its class, and a card is still worth drawing.
+
+    No age cut, deliberately: the token carries class and size off the static
+    message, and neither of those decays. A ship 30 h silent still gets her
+    latest fix, her state and her sentence on the card — every field that DOES
+    decay — so blanking the one that does not would be backwards.
     """
     if client is None:
         return None
@@ -125,7 +159,7 @@ async def row_for(client: RedisClient | None, mmsi: int) -> list[Any] | None:
     except Exception as exc:
         logger.warning("hot hash unavailable: %s: %s", type(exc).__name__, exc)
         return None
-    return None if field is None else _decode(mmsi, field, time.time())
+    return None if field is None else _decode(mmsi, field, time.time(), None)
 
 
 async def counts_for(

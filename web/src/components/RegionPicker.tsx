@@ -1,8 +1,12 @@
 /** F6 region picker — docs/design/"ais-lake MVP Batch 1 Map Shell.dc.html" :: "Region picker".
  *
  *  Seas and straits with a live count each, straight from GET /v1/regions (the
- *  server owns the bboxes; the client never invents one). A null count is the
- *  coming-soon signal — that row is listed but not pickable.
+ *  server owns the bboxes; the client never invents one). `live: false` is the
+ *  coming-soon signal — that row is listed but not pickable. A null count is NOT:
+ *  it also means "we could not read the number this second" (api/app/regions.py
+ *  returns null rather than a zero, because an empty sea would be a lie), and
+ *  reading it as coming-soon disabled every row the moment Redis blinked — the one
+ *  control whose whole job is to move the user somewhere else.
  *
  *  Picking re-centres the map and, because the url patch carries the new bbox to
  *  the open socket, re-subscribes the live feed within the same second.
@@ -16,6 +20,8 @@ interface Region {
   slug: string;
   name: string;
   bbox: Bbox;
+  /** Whether this sea is served at all — off regions.json, not off the counter. */
+  live: boolean;
   count: number | null;
 }
 interface RegionsResponse {
@@ -26,7 +32,7 @@ interface RegionsResponse {
 const COUNT = new Intl.NumberFormat('en-US');
 
 function Row({ region, active, onPick }: { region: Region; active: boolean; onPick: () => void }) {
-  const soon = region.count === null;
+  const soon = !region.live;
   return (
     <button
       type="button"
@@ -49,8 +55,14 @@ function Row({ region, active, onPick }: { region: Region; active: boolean; onPi
       >
         {region.name}
       </span>
+      {/* a live sea we could not count says so — it does not borrow "coming soon",
+          which is a fact about the sea, or a number, which we do not have. */}
       <span className="font-mono text-[11px] text-[var(--chrome-picker-count)]">
-        {soon ? 'coming soon' : COUNT.format(region.count as number)}
+        {soon
+          ? 'coming soon'
+          : region.count === null
+            ? 'count unavailable'
+            : COUNT.format(region.count)}
       </span>
     </button>
   );
@@ -83,15 +95,21 @@ export function RegionPicker() {
   useEffect(() => {
     if (!open) return;
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key !== 'Escape') return;
+      setOpen(false);
+      event.preventDefault(); // consumed: the ship card must not close along with it
     };
     const away = (event: PointerEvent) => {
       if (!box.current?.contains(event.target as Node)) setOpen(false);
     };
-    window.addEventListener('keydown', key);
+    // Capture, because the card's Escape listener is a peer on `window` and peers
+    // run in registration order — the card would win whenever it opened first.
+    // Capture always precedes bubble, so the nearer overlay gets the key and the
+    // card, which stands down for a defaulted event, keeps out of it.
+    window.addEventListener('keydown', key, true);
     window.addEventListener('pointerdown', away);
     return () => {
-      window.removeEventListener('keydown', key);
+      window.removeEventListener('keydown', key, true);
       window.removeEventListener('pointerdown', away);
     };
   }, [open]);

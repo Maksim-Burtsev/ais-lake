@@ -6,14 +6,23 @@ import { expect, test, type Page, type WebSocketRoute } from '@playwright/test';
 
 const KATTEGAT: [number, number, number, number] = [9.5, 55.5, 13.0, 58.0];
 
+/** `live` is what says a sea is served; `count` is only the number. Dover carries
+ *  the case the two used to be confused into one: a live strait we could not count
+ *  this second (Redis blinking), which must stay pickable. */
 const REGIONS = {
   regions: [
-    { slug: 'north-sea', name: 'North Sea', bbox: [-6.5, 49, 13, 61.5], count: 4377 },
-    { slug: 'baltic', name: 'Baltic', bbox: [9.5, 53.5, 30, 66], count: null },
+    { slug: 'north-sea', name: 'North Sea', bbox: [-6.5, 49, 13, 61.5], live: true, count: 4377 },
+    { slug: 'baltic', name: 'Baltic', bbox: [9.5, 53.5, 30, 66], live: false, count: null },
   ],
   straits: [
-    { slug: 'dover-strait', name: 'Dover Strait', bbox: [0.9, 50.7, 2.2, 51.4], count: 96 },
-    { slug: 'kattegat', name: 'Kattegat', bbox: KATTEGAT, count: 212 },
+    {
+      slug: 'dover-strait',
+      name: 'Dover Strait',
+      bbox: [0.9, 50.7, 2.2, 51.4],
+      live: true,
+      count: null,
+    },
+    { slug: 'kattegat', name: 'Kattegat', bbox: KATTEGAT, live: true, count: 212 },
   ],
 };
 
@@ -70,10 +79,17 @@ test('region picker · seas, straits, and a switch that re-centres and re-subscr
   await expect(panel.getByText('Straits')).toBeVisible();
   await expect(panel.getByText('— live theatre')).toBeVisible();
 
-  // a null count is the coming-soon row: listed, named, not pickable.
+  // `live: false` is the coming-soon row: listed, named, not pickable.
   const soon = panel.getByRole('button', { name: /Baltic/ });
   await expect(soon).toContainText('coming soon');
   await expect(soon).toBeDisabled();
+
+  // ... and a live sea we could not count is NOT that row. It says the number is
+  // missing and stays pickable: a blink of Redis must never strand the user by
+  // disabling the one control that moves them somewhere else.
+  const blind = panel.getByRole('button', { name: /Dover Strait/ });
+  await expect(blind).toContainText('count unavailable');
+  await expect(blind).toBeEnabled();
 
   await panel.getByRole('button', { name: /Kattegat/ }).click();
   await expect(panel).toBeHidden();
@@ -174,6 +190,43 @@ test('region picker · a snapshot fills in around the live fleet, it does not re
     .toEqual([BASE_MMSI, BASE_MMSI + 1, SNAPSHOT_MMSI].map(String));
   // the snapshot only filled the gap — it did not rewind the ship the socket owns.
   expect((await oursOnMap(page))[BASE_MMSI]).toBe(3.0);
+});
+
+test('region picker · a snapshot retires the ships it no longer carries', async ({ page }) => {
+  // The other half of the merge: fillOnly can only ADD, so a ship that ages past the
+  // server's 24 h cut stops appearing in snapshots, stops generating deltas, and
+  // would sit on the water at her last position for ever — still drawn, still in the
+  // number F11 puts on screen. A snapshot is the whole truth for its own box.
+  const { live } = await boot(
+    page,
+    (box) => ((box[2] ?? 0) >= KATTEGAT[2] ? [[SNAPSHOT_MMSI, 56.8, 11.5, 45, 9, 'underway', 'cargo3']] : []),
+    '&z=9&c=3.0000,55.0000',
+  );
+
+  // a ship arrives live, inside the Kattegat, and is never mentioned again
+  await expect
+    .poll(
+      async () => {
+        live.socket?.send(
+          JSON.stringify({
+            ts: 1,
+            interval: 30,
+            vessels: [[BASE_MMSI, 56.9, 11.6, 45, 9, 'underway', 'tanker3']],
+          }),
+        );
+        return mmsisOnMap(page);
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual([String(BASE_MMSI)]);
+
+  await opener(page).click();
+  await page.getByRole('group', { name: 'Region' }).getByRole('button', { name: /Kattegat/ }).click();
+
+  // the Kattegat's own snapshot does not carry her, so she is a ghost and goes.
+  await expect
+    .poll(() => mmsisOnMap(page), { timeout: 10_000 })
+    .toEqual([String(SNAPSHOT_MMSI)]);
 });
 
 test('region picker · Escape and a click outside close it', async ({ page }) => {

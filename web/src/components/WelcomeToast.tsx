@@ -19,7 +19,9 @@ import { useState } from 'react';
 /** Flat key, like theme.ts's `theme`: this app owns its whole origin. */
 export const WELCOME_STORAGE_KEY = 'welcome-dismissed';
 
-/** Approved copy — docs/01-mvp-spec.html F11. Verbatim. */
+/** Approved copy, verbatim — docs/design/"ais-lake MVP Batch 1 Map Shell.dc.html"
+ *  :: "First visit", and docs/05-design-prompts.md §Batch 1. NOT the spec: F11
+ *  states the behaviour, the frame owns the words. */
 const COPY = 'Real ships, live. Click any of them.';
 
 function wasDismissed(): boolean {

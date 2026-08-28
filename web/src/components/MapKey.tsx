@@ -74,8 +74,11 @@ export function MapKey() {
         Silent
       </div>
       <div className="mt-[2px] h-px bg-[var(--chrome-key-rule)]" />
+      {/* the dash is the card's own idiom for a fact we do not have (F15): before
+          anything has answered we cannot tell how many ships are out there, and a
+          zero over a full sea would be the one lie this panel could tell. */}
       <div className="font-mono text-[11px] tracking-[0.1em] text-[var(--chrome-key-count)]">
-        {COUNT.format(ships)} SHIPS
+        {ships === null ? '—' : COUNT.format(ships)} SHIPS
       </div>
     </div>
   );

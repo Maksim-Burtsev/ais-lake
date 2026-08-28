@@ -141,13 +141,32 @@ async def test_no_redis_costs_the_class_and_nothing_else() -> None:
     assert card["sentence"] == STORED_SENTENCE
 
 
-async def test_a_stale_hot_field_is_not_a_class_either() -> None:
-    """The age cut is _rows'; row_for shares it, so a ghost's token is not read."""
+async def test_a_stale_hot_field_still_names_her_class() -> None:
+    """The age cut is _rows': it keeps "live" honest for drawing and for counting.
+    Identity is not that. The sym token encodes class and size off the static
+    message, neither of which decays, so row_for reads it at any age. A ship 30 h
+    silent gets her fix, her state and her sentence on the card — every field that
+    DOES decay — so blanking the one that does not would be backwards."""
     from app.limits import MAX_VESSEL_AGE_S
 
-    old = {str(MMSI): field(int(time.time()) - MAX_VESSEL_AGE_S - 60, 51.9, 4.0, 0, 0, "moored")}
+    stale = int(time.time()) - MAX_VESSEL_AGE_S - 60
+    old = {str(MMSI): field(stale, 51.9, 4.0, 0, 0, "moored", "tanker4")}
     card = await card_for(FULL, HotHash(old), str(MMSI))
-    assert card["identity"]["class"] is None
+    assert card["identity"]["class"] == "Tanker"
+    assert card["identity"]["sym"] == "tanker4"
+
+
+def test_a_class_key_we_have_no_word_for_says_so_once(caplog: Any) -> None:
+    """CLASS_NAMES must track refinery/symbology.py and nothing enforces it. The
+    day M3 adds a dredger, every one of her rows would draw "—" for a class the
+    wire is carrying — so the miss is logged, once, not per row."""
+    from app.ships import _UNKNOWN_CLASS_KEYS, class_name
+
+    _UNKNOWN_CLASS_KEYS.discard("dredger")
+    with caplog.at_level("WARNING", logger="ships"):
+        assert [class_name("dredger3"), class_name("dredger7")] == [None, None]
+    assert len([r for r in caplog.records if "dredger" in r.getMessage()]) == 1
+    assert class_name("tanker4") == "Tanker" and class_name(None) is None
 
 
 async def test_a_dead_clickhouse_is_not_an_empty_card() -> None:

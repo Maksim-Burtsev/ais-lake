@@ -19,7 +19,9 @@
  *     criterion says "enter opens story", but the story page is F12/M4 and does
  *     not exist. The frame's own caption is "⏎ flies the map to it".
  *   · ports never appear: /v1/search returns that group empty until M3 draws the
- *     port polygons.
+ *     port polygons. The day it fills, three things here have to move with it —
+ *     `Results` needs a `ports` field, `rows` has to count it, and `activate`
+ *     has to index it — or a query matching only ports renders "nothing".
  *   · "every sea" in the empty state is a colour, not a link — the full-page
  *     search across every sea is a later screen.
  *   · picking a sea repeats RegionPicker's two lines (patch the region, fly the
@@ -27,6 +29,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import limits from '../limits.json';
 import { CMETA, hullD, iconOf } from '../map/hulls';
 import { mapView, type Bbox } from '../map/view';
 import { useLiveStore } from '../state/live';
@@ -61,10 +64,16 @@ interface Sea {
   count: number | null;
 }
 interface Results {
+  /** false = the lake never answered — no connection, or the query failed. `ships:
+   *  []` then means "did not ask", never "nothing out there", and the empty state
+   *  must not make a claim about a question that was never put. */
+  answering: boolean;
   ships: Ship[];
   seas: Sea[];
   near: Ship | null;
-  searched: { live: number | null; seen_30d: number | null };
+  /** `region` is the display NAME of the box `live` was counted in — the server's
+   *  own, since /v1/search takes no region and cannot know where the picker is. */
+  searched: { live: number | null; seen_30d: number | null; region: string | null };
 }
 
 /** Both panels wear the region picker's chrome — the frames measured identical. */
@@ -86,11 +95,39 @@ const METRIC_INK: Record<string, string> = {
   moored: 'var(--chrome-search-moored)',
 };
 
+/** How old her last fix may be and still say where she IS (F27 — the same number
+ *  the map and every region count enforce, read and never typed). */
+const LIVE_WINDOW_H = limits.map_vessel_age_s.max / 3_600;
+
+/** Her age when the fix is older than that, else null. The server lists ships with
+ *  no recent fix on purpose — identity is real whether or not she is transmitting —
+ *  so the row has to say which kind it is: without this a ship last heard forty days
+ *  ago renders "Cargo · Netherlands · Moored", character-for-character the same as
+ *  one heard thirty seconds ago, inside a panel whose own empty state says nothing
+ *  called that is transmitting. */
+const staleAge = (ship: Ship): number | null =>
+  ship.age_h !== null && ship.age_h > LIVE_WINDOW_H ? ship.age_h : null;
+
+const ago = (h: number) => (h >= 48 ? `${Math.round(h / 24)} d ago` : `${Math.round(h)} h ago`);
+
+/** The refinery withholds the figure below this: `underway` is every nav_status
+ *  outside (1, 5) — aground, not-under-command and 15 "undefined" included — so
+ *  "Under way" at 0.0 kn is a state, not a speed, and printing the number states
+ *  the contradiction twice in the teal under-way ink.
+ *  ponytail: the same threshold now lives in two languages, which is the real debt.
+ *  It belongs on the wire (or in the sentence, which already carries it) rather
+ *  than in a constant each side keeps in step by hand. */
+const UNDERWAY_MIN_SOG_KN = 0.5; // refinery/state.py::UNDERWAY_MIN_SOG_KN
+
 /** The trailing figure. At anchor and moored carry none: how long she has been
  *  there needs an anchorage event with a start time (F19, M5), and the age of
  *  her last fix is a different fact that would read as that one. */
 function metric(ship: Ship): string | null {
-  if (ship.state === 'underway' && ship.sog !== null) return `${ship.sog.toFixed(1)} kn`;
+  const old = staleAge(ship);
+  if (old !== null) return ago(old); // history, not a position: no present tense
+  if (ship.state === 'underway' && ship.sog !== null && ship.sog >= UNDERWAY_MIN_SOG_KN) {
+    return `${ship.sog.toFixed(1)} kn`;
+  }
   if (ship.state === 'silent' && ship.age_h !== null) return `${Math.round(ship.age_h)} h`;
   return null;
 }
@@ -160,7 +197,6 @@ function Row({
 }
 
 export function Search() {
-  const region = useUrlStore((s) => s.region);
   const patch = useUrlStore((s) => s.patch);
   const setSearchOpen = useLiveStore((s) => s.setSearchOpen);
   const [q, setQ] = useState('');
@@ -245,8 +281,13 @@ export function Search() {
 
   const key = (event: React.KeyboardEvent) => {
     if (event.key === 'Escape') {
+      if (!open) return; // nothing of ours to close: the ship card may have it
       setOpen(false);
       input.current?.focus();
+      // Consumed. React attaches this at the root, so without it the native event
+      // still reaches the card's window listener and closing the dropdown also
+      // closed the card and stripped ?sel= from the URL.
+      event.preventDefault();
       return;
     }
     if (!shown || rows === 0) return;
@@ -330,7 +371,17 @@ export function Search() {
                   {[ship.class, ship.flag, ship.sentence].filter(Boolean).join(' · ')}
                 </div>
               </div>
-              <span className="font-mono text-[10px]" style={{ color: METRIC_INK[ship.state ?? ''] }}>
+              {/* an age is not a state, so it is drawn in the still hull's ink
+                  whatever state that last fix was in. */}
+              <span
+                className="font-mono text-[10px]"
+                style={{
+                  color:
+                    staleAge(ship) !== null
+                      ? 'var(--chrome-search-hull-still)'
+                      : METRIC_INK[ship.state ?? ''],
+                }}
+              >
                 {metric(ship)}
               </span>
             </Row>
@@ -364,7 +415,7 @@ export function Search() {
         </div>
       )}
 
-      {empty && <Empty q={query} region={region} data={data} />}
+      {empty && <Empty q={query} data={data} />}
     </div>
   );
 }
@@ -386,11 +437,36 @@ function Try({ k, last, children }: { k: string; last?: boolean; children: React
   );
 }
 
-/** Frame 8c. Not a listbox: nothing here is pickable, it is an explanation. */
-function Empty({ q, region, data }: { q: string; region: string; data: Results }) {
-  const { live, seen_30d: seen } = data.searched;
+/** Frame 8c. Not a listbox: nothing here is pickable, it is an explanation.
+ *
+ *  The region is the server's `searched.region` — the box those `live` vessels were
+ *  actually counted in — and not the picker's, which would quote a North Sea number
+ *  as the Kattegat's. Null drops the clause: no substitute, since the whole point of
+ *  the sentence is that it names what was measured. */
+function Empty({ q, data }: { q: string; data: Results }) {
+  const { live, seen_30d: seen, region } = data.searched;
   const near = data.near;
   const nearSub = near && [near.class, near.sentence].filter(Boolean).join(', ');
+  const where = region ? ` in the ${region}` : '';
+  // An empty list from a search that never ran is not a fact about this ship.
+  if (!data.answering) {
+    return (
+      <div
+        onMouseDown={(event) => event.preventDefault()}
+        className={`${HANG} w-[440px] px-[24px] pt-[24px] pb-[22px]`}
+        style={PANEL}
+      >
+        <div className="font-display text-[22px] font-medium text-[var(--chrome-picker-ink-active)]">
+          The search is not answering
+        </div>
+        <p className="mt-[10px] text-[14px] leading-[1.6] text-[var(--chrome-search-sub)]">
+          We could not ask, so this says nothing about where{' '}
+          <span className="italic">{q}</span> is. The ships on the map are still
+          moving — try again in a moment.
+        </p>
+      </div>
+    );
+  }
   return (
     <div
       onMouseDown={(event) => event.preventDefault()}
@@ -402,7 +478,7 @@ function Empty({ q, region, data }: { q: string; region: string; data: Results }
       </div>
       <p className="mt-[10px] text-[14px] leading-[1.6] text-[var(--chrome-search-sub)]">
         {live !== null && seen !== null
-          ? `We searched ${COUNT.format(live)} vessels live in the ${region} and ${COUNT.format(seen)} seen in the last thirty days. `
+          ? `We searched ${COUNT.format(live)} vessels live${where} and ${COUNT.format(seen)} seen in the last thirty days. `
           : ''}
         A ship with her transponder off does not appear here at all.
       </p>
@@ -413,8 +489,8 @@ function Empty({ q, region, data }: { q: string; region: string; data: Results }
       <div className="mt-[10px] flex flex-col">
         <Try k="MMSI">search her nine-digit MMSI instead of the name</Try>
         <Try k="SEA" last={!near}>
-          widen to <span className="text-[var(--chrome-search-focus)]">every sea</span> — she may
-          be outside the {region}
+          widen to <span className="text-[var(--chrome-search-focus)]">every sea</span>
+          {region ? ` — she may be outside the ${region}` : ''}
         </Try>
         {near && (
           <Try k="NEAR" last>

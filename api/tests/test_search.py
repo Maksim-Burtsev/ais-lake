@@ -68,8 +68,17 @@ class FakeClickHouse:
 
         def key(s: Ship) -> tuple[Any, ...]:
             t = tier(s)
+            d = ngram(s.name, q)
             live = s.last_ts.timestamp() > now - parameters["age"]
-            return (t, 0.0 if t < 2 else round(ngram(s.name, q), 1), not live, s.name)
+            # The module's ORDER BY verbatim, rejects last inside tier 2 so one
+            # cannot take a hit's place under the LIMIT.
+            return (
+                t,
+                0 if t < 2 else int(d > parameters["ngram_max"]),
+                0.0 if t < 2 else round(d, 1),
+                not live,
+                s.name,
+            )
 
         return FakeResult(
             [
@@ -158,7 +167,7 @@ async def test_a_miss_carries_the_nearest_name_and_the_real_numbers() -> None:
     body = await search_payload(FakeClickHouse(FLEET), HotHash(HOT), "gas khiozz qqq www")
     assert body["ships"] == []
     assert body["near"] is not None and body["near"]["name"] == "GAS KHIOS"
-    assert body["searched"] == {"live": 1, "seen_30d": 41880}
+    assert body["searched"] == {"live": 1, "seen_30d": 41880, "region": "North Sea"}
 
 
 async def test_a_miss_with_nothing_in_common_offers_no_nearest() -> None:
@@ -190,6 +199,55 @@ async def test_the_result_cap_holds() -> None:
     fleet = [Ship(249118100 + i, f"GAS KHIOS {i}") for i in range(RESULT_CAP + 6)]
     body = await search_payload(FakeClickHouse(fleet), HotHash(HOT), "gas")
     assert len(body["ships"]) == RESULT_CAP
+
+
+async def test_a_dead_lake_says_so_rather_than_stating_the_miss() -> None:
+    """A broken query and a genuine miss are the same empty list, so the empty
+    list cannot be the answer: `answering` is what stops the panel printing
+    "nothing called GAS KHIOS is transmitting" while the map still draws her."""
+    dead = await search_payload(DeadClickHouse(), HotHash(HOT), "gas khios")
+    assert dead["ships"] == [] and dead["answering"] is False
+    assert (await search_payload(None, HotHash(HOT), "gas khios"))["answering"] is False
+
+    live = FakeClickHouse(FLEET)
+    miss = await search_payload(live, HotHash(HOT), "qqqzzzxxx")
+    assert miss["ships"] == [] and miss["answering"] is True  # a real miss, same shape
+    assert (await search_payload(live, HotHash(HOT), "gas k"))["answering"] is True
+
+
+async def test_the_counted_region_is_named_on_the_wire_not_left_to_the_client() -> None:
+    """`live` counts the region this process serves. Unlabelled, the client prints
+    it as "in the <whatever the picker says>" — a North Sea figure in a Kattegat
+    sentence, in the one panel whose job is to quote measured numbers."""
+    body = await search_payload(FakeClickHouse(FLEET), HotHash(HOT), "qqqzzzxxx")
+    assert body["searched"] == {"live": 1, "seen_30d": 41880, "region": "North Sea"}
+    blank = await search_payload(FakeClickHouse(FLEET), HotHash(HOT), "  ")
+    assert blank["searched"]["region"] == "North Sea"
+
+
+# A tier-2 bucket that straddles the accept threshold. The stand-in ngram is
+# 1 - shared/len(q's trigrams), so against an 18-trigram query each shared trigram
+# is worth 1/18: a 10-char prefix of it shares 8 (0.556, accepted) and each decoy
+# shares 7 (0.611, rejected). Both round into the same 0.6 bucket, and every decoy
+# beats the hit on the name tiebreak — which is how a reject used to evict it.
+STRADDLE_Q = "VANGUARD ATLANTIS XX"
+HIT = Ship(249118200, STRADDLE_Q[:10])
+DECOYS = [Ship(249118210 + i, f"{STRADDLE_Q[:9]}{i}") for i in range(RESULT_CAP)]
+
+
+async def test_a_reject_in_the_same_bucket_cannot_evict_a_real_match() -> None:
+    """SQL buckets on round(dist, 1), python accepts on the raw distance, so one
+    bucket holds both. Ordered on the bucket alone the LIMIT fills with rejects,
+    python drops every one of them, and a match that existed comes back "no
+    ships" — F5's fuzzy half, broken without a sound."""
+    for decoy in DECOYS:
+        assert ngram(decoy.name, STRADDLE_Q) > NGRAM_MAX
+        assert round(ngram(decoy.name, STRADDLE_Q), 1) == round(ngram(HIT.name, STRADDLE_Q), 1)
+        assert decoy.name < HIT.name  # ... and it would win the name tiebreak
+    assert ngram(HIT.name, STRADDLE_Q) <= NGRAM_MAX
+
+    body = await search_payload(FakeClickHouse([*DECOYS, HIT]), HotHash(HOT), STRADDLE_Q)
+    assert [s["name"] for s in body["ships"]] == [HIT.name]
 
 
 def test_the_threshold_reads_the_right_way_round() -> None:

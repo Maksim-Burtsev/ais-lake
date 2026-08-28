@@ -24,6 +24,8 @@ Unknowns come back null, never a plausible substitute: the card draws them as
 No ClickHouse means no identity and no sentence, which is not a card at all —
 that 503s, on the snapshot's reasoning. No Redis costs only the sprite token, so
 the class goes null and everything else stays true (/status.json's reasoning).
+That token is read at ANY age, unlike the map's: it encodes class and size, which
+do not decay the way a fix does.
 
 Gap: the frame ends its sentence with "· a 17-ship queue awaits". Port queue
 numbers are F19 (M5) and do not exist yet, so nothing here invents one.
@@ -53,6 +55,31 @@ CLASS_NAMES = {
     "pleasure": "Pleasure / sailing",
     "unknown": "Unknown",
 }
+# Keys we have already complained about, so a fleet-wide miss is one line in the
+# log and not one per row.
+_UNKNOWN_CLASS_KEYS: set[str] = set()
+
+
+def class_name(sym: str | None) -> str | None:
+    """The word a person reads for a sprite token — the card's and search's one
+    way in, because two lookups on this table is how they drift apart.
+
+    CLASS_NAMES has to stay in lockstep with refinery/symbology.py and nothing
+    enforces that, so an unrecognised key says so once instead of quietly drawing
+    "—" for a class the wire is carrying.
+    """
+    if not sym:
+        return None
+    # rstrip is a CHARACTER-SET strip, not a suffix strip: it would eat the tail
+    # of a future class key that itself ends in a digit ("tug2" -> "tug"), so a
+    # key like "b2b" needs a real LOD-digit split here first.
+    key = sym.rstrip("0123456789")
+    name = CLASS_NAMES.get(key)
+    if name is None and key not in _UNKNOWN_CLASS_KEYS:
+        _UNKNOWN_CLASS_KEYS.add(key)
+        logger.warning("no display name for class key %r (sym %r): CLASS_NAMES is behind "
+                       "refinery/symbology.py", key, sym)
+    return name
 
 LATEST_QUERY = """
 SELECT max(ts), argMax(lat, ts), argMax(lon, ts), argMax(sog, ts), argMax(cog, ts),
@@ -160,7 +187,7 @@ async def card_for(
             "name": _text(name),
             "callsign": _text(callsign),
             "flag": flag_for(mmsi),
-            "class": CLASS_NAMES.get(sym.rstrip("0123456789")) if sym else None,
+            "class": class_name(sym),
             "sym": sym,
             "size_m": _reported(dim_a + dim_b),
             "draught_m": _reported(round(float(draught), 1)),

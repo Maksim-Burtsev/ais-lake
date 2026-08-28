@@ -30,13 +30,17 @@ const GAS = [
 ];
 const SEA = { slug: 'kattegat', name: 'Kattegat', bbox: KATTEGAT, count: 318 };
 
+/** `answering` and `searched.region` are the server's, not the client's: an empty
+ *  list from a search that never ran is not a fact, and the region printed in the
+ *  empty state is the box those `live` vessels were counted in. */
 const body = (over: Record<string, unknown> = {}) => ({
   q: 'gas k',
+  answering: true,
   ships: GAS,
   ports: [],
   seas: [SEA],
   near: null,
-  searched: { live: 2412, seen_30d: 41880 },
+  searched: { live: 2412, seen_30d: 41880, region: 'North Sea' },
   ...over,
 });
 
@@ -153,6 +157,40 @@ test('search · nothing to show says what was searched, in real numbers', async 
   await expect(page.getByText(/closest match/)).toContainText(
     'closest match: Gas Khios II — Cargo, Under way at 9.8 kn',
   );
+});
+
+test('search · a lake that never answered does not claim she is not transmitting', async ({
+  page,
+}) => {
+  await boot(page, always(body({ answering: false, ships: [], seas: [], near: null })));
+  await field(page).fill('Gas Khios');
+
+  await expect(page.getByText('The search is not answering')).toBeVisible();
+  await expect(page.getByText('is transmitting')).toBeHidden();
+});
+
+test('search · a row never states a present tense the fix cannot back', async ({ page }) => {
+  await boot(
+    page,
+    always(
+      body({
+        ships: [
+          // last heard forty days ago: her identity is real, her position is history
+          ship(3, 'Long Gone', { state: 'moored', sentence: 'Moored', sog: 0, age_h: 960 }),
+          // "Under way" below the refinery's 0.5 kn: aground and not-under-command
+          // both land in this state, so the server withholds the figure on purpose
+          ship(4, 'Dead Slow', { sentence: 'Under way', sog: 0 }),
+        ],
+        seas: [],
+      }),
+    ),
+  );
+  await field(page).fill('g');
+
+  const rows = panel(page).getByRole('option');
+  await expect(rows.first()).toContainText('40 d ago');
+  await expect(rows.first()).not.toContainText('kn');
+  await expect(rows.nth(1)).not.toContainText('0.0 kn');
 });
 
 test('search · a slow answer to an old query never lands on a newer one', async ({ page }) => {

@@ -75,11 +75,12 @@ async function pointFor(page: Page, lon: number, lat: number) {
   return { x: box!.x + at[0]!, y: box!.y + at[1]!, box: box! };
 }
 
-async function boot(page: Page, query = '') {
+async function boot(page: Page, query = '', status = 200) {
   const live: { socket: WebSocketRoute | null } = { socket: null };
   const asked: string[] = [];
   await page.route('**/v1/ships/*', (route) => {
     asked.push(route.request().url());
+    if (status !== 200) return route.fulfill({ status, json: { detail: 'no such vessel' } });
     return route.fulfill({
       json: {
         mmsi: MMSI,
@@ -196,4 +197,52 @@ test('card · ?sel=banana is ignored, not a boot failure', async ({ page }) => {
   await boot(page, '&sel=banana');
   await expect(card(page)).toBeHidden();
   await expect(page.getByRole('button', { name: 'All ships' })).toBeVisible();
+});
+
+test('card · a well-formed MMSI the lake does not hold says so', async ({ page }) => {
+  // banana never reaches the network — the URL parser rejects it. THIS is where the
+  // card failed: a typo'd nine-digit number, a stale share link, or a ship aged out
+  // of the lake, all of which 404 and used to draw the loading shell for ever — a
+  // card asserting we hold this vessel and know nothing about her.
+  await boot(page, `&sel=${MMSI}`, 404);
+
+  await expect(card(page)).toBeVisible();
+  await expect(card(page).getByText('No ship with this number is in the lake.')).toBeVisible();
+  await expect(card(page).getByText('MMSI 999 000 001')).toBeVisible();
+});
+
+test('card · Escape closes the search dropdown without taking the card with it', async ({
+  page,
+}) => {
+  const { live } = await boot(page, `&sel=${MMSI}`);
+  await seaFills(page, live);
+  await page.route('**/v1/search*', (route) =>
+    route.fulfill({
+      json: {
+        q: 'gas',
+        answering: true,
+        ships: [],
+        ports: [],
+        seas: [],
+        near: null,
+        searched: { live: 1, seen_30d: 1, region: 'North Sea' },
+      },
+    }),
+  );
+
+  const field = page.getByRole('combobox', { name: 'Search' });
+  await field.fill('gas');
+  await expect(page.getByText('is transmitting')).toBeVisible();
+
+  // one Escape closes the dropdown and nothing else: the card outlives it, ?sel=
+  // stays in the URL, and the ship stays selected on the water.
+  await field.press('Escape');
+  await expect(page.getByText('is transmitting')).toBeHidden();
+  await expect(card(page)).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`[?&]sel=${MMSI}`));
+
+  // the second one has nothing nearer to close, so it reaches the card.
+  await field.press('Escape');
+  await expect(card(page)).toBeHidden();
+  await expect(page).not.toHaveURL(/[?&]sel=/);
 });

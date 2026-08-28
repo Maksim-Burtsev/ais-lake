@@ -41,9 +41,12 @@ interface LiveStore {
   silent: number;
   setSilent: (silent: number) => void;
   /** F11 — every ship inside the current viewport, counted on the same fleet
-   *  walk that produces `silent` (MapCanvas `recount`). The map key prints it. */
-  ships: number;
-  setShips: (ships: number) => void;
+   *  walk that produces `silent` (MapCanvas `recount`). The map key prints it.
+   *  null = we cannot tell: nothing has answered yet, and a failed snapshot leaves
+   *  an empty fleet whose honest reading is "unknown", not "0 ships". /v1/regions
+   *  returns null for the same reason — an empty sea would be a lie. */
+  ships: number | null;
+  setShips: (ships: number | null) => void;
   /** F5 — the search panel is open, so the chips step back to .25 (the frame
    *  dims them). Ephemeral like the rest of this store: it must not reach the
    *  address bar, and one boolean does not earn a store of its own. */
@@ -56,7 +59,7 @@ export const useLiveStore = create<LiveStore>((set) => ({
   setStatus: (status) => set({ status }),
   silent: 0,
   setSilent: (silent) => set({ silent }),
-  ships: 0,
+  ships: null, // nothing has answered yet
   setShips: (ships) => set({ ships }),
   searchOpen: false,
   setSearchOpen: (searchOpen) => set({ searchOpen }),

@@ -43,6 +43,20 @@ async def test_dead_redis_keeps_the_picker_working_with_null_counts() -> None:
     assert all("bbox" in r and "slug" in r for r in payload["regions"])
 
 
+async def test_a_live_region_with_redis_down_is_live_with_no_number() -> None:
+    """`live` and the count are two facts, and null cannot carry both. Read as
+    coming-soon, an unreachable Redis would disable every row in the picker and
+    strand the user in the region they were trying to leave."""
+    payload = await regions_payload(DeadRedis())
+    rows = {r["name"]: r for r in [*payload["regions"], *payload["straits"]]}
+    assert rows["North Sea"]["live"] is True and rows["North Sea"]["count"] is None
+    assert rows["Kattegat"]["live"] is True and rows["Kattegat"]["count"] is None
+    assert rows["Baltic"]["live"] is False  # this one really is coming soon
+
+    healthy = {r["name"]: r for r in (await regions_payload(FakeRedis(FLEET)))["regions"]}
+    assert healthy["North Sea"] == {**healthy["North Sea"], "live": True, "count": 2}
+
+
 async def test_route_never_500s_when_redis_is_down() -> None:
     from app.main import regions, runtime
 

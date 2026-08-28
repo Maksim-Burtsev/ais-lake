@@ -322,17 +322,26 @@ export function MapCanvas() {
       }
     };
 
-    /** F7 count line: silent ships inside the viewport, from the fleet we already
-     *  hold — queryRenderedFeatures would only see what is currently painted. */
+    /** F7 count line and F11 map key: ships inside the viewport — all of them,
+     *  and the silent ones — from the fleet we already hold, because
+     *  queryRenderedFeatures would only see what is currently painted.
+     *
+     *  One walk, two counters. This runs on every moveend AND every delta frame,
+     *  so the O(fleet) tail is paid often enough that a second pass for the second
+     *  number would be the whole cost again for nothing. */
     const recount = () => {
       const bounds = map.getBounds();
-      let n = 0;
+      let silent = 0;
+      let ships = 0;
       for (const f of fleet.values()) {
-        if (f.properties.state !== 'silent') continue;
         const [lon, lat] = f.geometry.coordinates as [number, number];
-        if (bounds.contains([lon, lat])) n += 1;
+        if (!bounds.contains([lon, lat])) continue;
+        ships += 1;
+        if (f.properties.state === 'silent') silent += 1;
       }
-      useLiveStore.getState().setSilent(n);
+      const live = useLiveStore.getState();
+      live.setSilent(silent);
+      live.setShips(ships);
       syncPulse();
     };
 

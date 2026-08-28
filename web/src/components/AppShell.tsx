@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import { useLiveStore } from '../state/live';
 import { FilterChips, SilentCountLine } from './FilterChips';
+import { MapKey } from './MapKey';
 import { ShipCard } from './ShipCard';
 import { TopBar } from './TopBar';
+import { WelcomeToast } from './WelcomeToast';
 
 /** S1 shell: the bar on top, everything else over the sea.
  *  The sea is a flat --sea-deep plate here — the MapLibre canvas replaces it
@@ -27,6 +29,10 @@ export function AppShell({ children }: { children?: ReactNode }) {
           <SilentCountLine />
         </div>
         <ShipCard />
+        {/* F11 — both carry their own frame coordinates: the key bottom-left under
+            the chips (z10), the toast bottom-centre over them (z25). */}
+        <MapKey />
+        <WelcomeToast />
       </main>
     </div>
   );

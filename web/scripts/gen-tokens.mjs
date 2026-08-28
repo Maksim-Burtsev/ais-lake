@@ -109,6 +109,22 @@ const FRAME_EXTRAS = {
     'chrome-card-action-ink': '#0A1620',
     'chrome-card-star-border': '#2A4457',
     'chrome-card-star-ink': '#9DB4C2',
+    // F11 welcome toast + map key :: "First visit" (1b)
+    'chrome-toast-fill': 'rgba(10,22,32,.95)',
+    'chrome-toast-border': '#2A4457', // == color.night.border
+    'chrome-toast-shadow': '0 16px 40px rgba(0,0,0,.5)',
+    'chrome-toast-ink': '#F2EADB',
+    'chrome-toast-dismiss': '#7E8B93', // the ✕
+    'chrome-key-fill': 'rgba(10,22,32,.92)',
+    'chrome-key-border': '#1C3040',
+    'chrome-key-ink': '#DCE7ED', // the three row labels
+    'chrome-key-hull': '#EAF2F7', // == color.night.vessel hull.lit
+    'chrome-key-hull-port': '#6E93AB', // the shaded half; the day frame inverts it
+    'chrome-key-anchor-ring': '#8FB8CC',
+    'chrome-key-anchor-dot': '#C6D8E2',
+    'chrome-key-silent': '#FF6A52',
+    'chrome-key-rule': '#1C3040',
+    'chrome-key-count': '#E8B25C', // "2,412 SHIPS"
   },
   day: {
     'chrome-hairline': '#D8CDB4', // == color.day.border (top bar + search)
@@ -178,6 +194,22 @@ const FRAME_EXTRAS = {
     'chrome-card-action-ink': '#FFF6F3',
     'chrome-card-star-border': '#C9BC9E',
     'chrome-card-star-ink': '#5C6B74',
+    // F11 :: "First visit · Blue Marble day" (1c) — the toast is opaque here.
+    'chrome-toast-fill': '#FBF6EA',
+    'chrome-toast-border': '#C9BC9E',
+    'chrome-toast-shadow': '0 16px 40px rgba(8,40,64,.28)',
+    'chrome-toast-ink': '#0E2231',
+    'chrome-toast-dismiss': '#77858E',
+    'chrome-key-fill': 'rgba(251,246,234,.95)',
+    'chrome-key-border': '#C9BC9E',
+    'chrome-key-ink': '#233642',
+    'chrome-key-hull': '#0C2436', // day inverts the pair: dark hull, sunlit port
+    'chrome-key-hull-port': '#FFE7B8',
+    'chrome-key-anchor-ring': '#2E6E86',
+    'chrome-key-anchor-dot': '#12384E',
+    'chrome-key-silent': '#D8361F', // == color.day.signal
+    'chrome-key-rule': '#D8CDB4', // == color.day.border
+    'chrome-key-count': '#B8145A',
   },
 };
 

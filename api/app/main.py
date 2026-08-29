@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import asyncpg
 import clickhouse_connect
 import redis.asyncio as redis
 from fastapi import FastAPI, HTTPException, WebSocket
@@ -21,6 +22,7 @@ from .consumer import LatestShips, consume_forever
 from .limits import clamp_interval
 from .live import Deltas, live_socket, subscribe_forever
 from .map import SnapshotUnavailable, parse_bbox, snapshot_payload
+from .ports import PortsUnavailable, port_payload, ports_geojson
 from .regions import regions_payload
 from .search import search_payload
 from .ships import CardUnavailable, ShipNotFound, card_for
@@ -39,6 +41,7 @@ class Runtime:
         self.started_at = time.monotonic()
         self.clickhouse: Any = None
         self.redis: redis.Redis | None = None
+        self.postgres: asyncpg.Pool | None = None
 
     @property
     def uptime_s(self) -> float:
@@ -74,11 +77,22 @@ async def open_redis() -> redis.Redis | None:
     return client
 
 
+async def open_postgres() -> asyncpg.Pool | None:
+    try:
+        return await asyncpg.create_pool(
+            os.environ.get("POSTGRES_URL", "postgresql://ais:ais-dev@localhost:5432/ais")
+        )
+    except Exception as exc:
+        logger.warning("postgres unavailable: %s: %s", type(exc).__name__, exc)
+        return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     runtime.started_at = time.monotonic()
     runtime.clickhouse = await open_clickhouse()
     runtime.redis = await open_redis()
+    runtime.postgres = await open_postgres()
     task = asyncio.create_task(
         consume_forever(
             ships,
@@ -95,6 +109,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await runtime.redis.aclose()
     if runtime.clickhouse is not None:
         await runtime.clickhouse.close()
+    if runtime.postgres is not None:
+        await runtime.postgres.close()
 
 
 app = FastAPI(title="ais-lake api", lifespan=lifespan)
@@ -118,6 +134,29 @@ async def map_snapshot(bbox: str | None = None, zoom: float | None = None) -> di
         return await snapshot_payload(runtime.redis, box)
     except SnapshotUnavailable as exc:
         raise HTTPException(503, "live snapshot unavailable") from exc
+
+
+@app.get("/v1/map/ports")
+async def map_ports() -> dict[str, Any]:
+    """The port and anchorage polygons, as one FeatureCollection. Static data —
+    read once per process, so this is a dict lookup after the first call."""
+    try:
+        return await ports_geojson(runtime.postgres)
+    except PortsUnavailable as exc:
+        raise HTTPException(503, "port polygons unavailable") from exc
+
+
+@app.get("/v1/ports/{locode}")
+async def port(locode: str) -> dict[str, Any]:
+    """F14's panel skeleton: the port's identity, with the queue numbers still
+    null until the detector fills them. An unknown locode 404s."""
+    try:
+        payload = await port_payload(runtime.postgres, locode)
+    except PortsUnavailable as exc:
+        raise HTTPException(503, "port unavailable") from exc
+    if payload is None:
+        raise HTTPException(404, "no such port")
+    return payload
 
 
 @app.get("/v1/regions")

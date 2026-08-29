@@ -33,7 +33,7 @@ Ranking. An exact MMSI (9 digits) or IMO (7) short-circuits the whole thing.
 Otherwise: a prefix hit, then a substring hit, then ClickHouse's own
 `ngramDistanceCaseInsensitiveUTF8` — which returns 0 for identical and 1 for
 nothing in common, so SMALLER IS BETTER and the ORDER BY is ascending. Inside a
-tier the fleet that is out there now (a fix inside the map's 24 h window) comes
+tier the fleet that is out there now (a fix inside the silence window) comes
 before the archive: a ship you could still watch beats one you can only read
 about.
 
@@ -58,7 +58,7 @@ import time
 from typing import Any
 
 from .flags import flag_for
-from .limits import MAX_VESSEL_AGE_S
+from .limits import SILENT_AFTER_S
 from .map import REGION, RedisClient, SnapshotUnavailable, counts_for, row_for
 from .regions import _entries
 from .ships import ClickHouseClient, ShipNotFound, _epoch, _resolve, _text, class_name
@@ -180,7 +180,7 @@ async def _ships(
         parameters={
             "q": q,
             "id": value,
-            "age": MAX_VESSEL_AGE_S,
+            "age": SILENT_AFTER_S,
             "cap": RESULT_CAP,
             "ngram_max": NGRAM_MAX,
         },

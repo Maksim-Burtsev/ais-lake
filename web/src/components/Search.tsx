@@ -95,9 +95,10 @@ const METRIC_INK: Record<string, string> = {
   moored: 'var(--chrome-search-moored)',
 };
 
-/** How old her last fix may be and still say where she IS (F27 — the same number
- *  the map and every region count enforce, read and never typed). */
-const LIVE_WINDOW_H = limits.map_vessel_age_s.max / 3_600;
+/** How old her last fix may be and still say where she IS (F27, read and never
+ *  typed). `silent_after`, not `max`: a ship the map still draws for another day
+ *  is not one to speak about in the present tense. */
+const LIVE_WINDOW_H = limits.map_vessel_age_s.silent_after / 3_600;
 
 /** Her age when the fix is older than that, else null. The server lists ships with
  *  no recent fix on purpose — identity is real whether or not she is transmitting —

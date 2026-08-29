@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from app.limits import MAX_VESSEL_AGE_S
+from app.limits import MAX_VESSEL_AGE_S, SILENT_AFTER_S
 from app.map import SnapshotUnavailable, parse_bbox, snapshot_payload
 
 # _rows cuts on age against the wall clock, so fixtures are dated relative to it —
@@ -99,6 +99,16 @@ async def test_dict_and_overlong_fields_are_skipped() -> None:
     }
     payload = await snapshot_payload(FakeRedis(junk))
     assert payload["count"] == 1
+
+
+def test_a_ship_goes_silent_before_she_leaves_the_map() -> None:
+    """The two windows must stay in this order or F7 has nothing to show.
+
+    Set them equal and a ship goes silent in the same instant she vanishes from
+    the snapshot, so the "Recently silent" chip can never brighten anybody — which
+    is exactly the bug this ordering was introduced to fix.
+    """
+    assert SILENT_AFTER_S < MAX_VESSEL_AGE_S
 
 
 async def test_fixes_older_than_the_age_cut_are_off_the_map() -> None:

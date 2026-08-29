@@ -6,7 +6,8 @@
     "floor": { "anon": 10, "free": 5 }
   },
   "map_vessel_age_s": {
-    "$comment": "How old a ship's last fix may be and still count as here. Past this it is off the map and out of every region count — the refinery's hot hash keeps a field forever, so without the cut the fleet is padded with ships that stopped reporting days ago. 24 h is the same window F7 'Recently silent' speaks in (docs/01-mvp-spec.html F7: 'brights <=24 h silents'), so when M3's gap classifier starts marking state=silent those ships are already inside the window and nothing has to be widened.",
-    "max": 86400
+    "$comment": "Two numbers, and they have to differ. `silent_after` is when we stop believing a ship is still transmitting: past it she is drawn silent and counted by F7's 'Recently silent' chip. `max` is when she leaves the map entirely, because the refinery's hot hash keeps a field forever and without the cut the fleet is padded with ships that stopped reporting days ago. Setting both to 24 h made a ship go silent in the same instant she vanished, so the chip could never show anybody — F7 says 'brights <=24 h silents', which only means something if a silent ship is still on the water to brighten. So: silent at 24 h, gone at 48 h, and a full day in between where she is visible AND silent. M3's gap detector opens its event at `silent_after` for the same reason.",
+    "silent_after": 86400,
+    "max": 172800
   }
 }

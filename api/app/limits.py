@@ -18,6 +18,10 @@ LIMITS: dict[str, Any] = json.loads(
 REFRESH: dict[str, Any] = LIMITS["map_refresh_s"]
 # Older than this and a ship is not on the map and not in a region count (map.py).
 MAX_VESSEL_AGE_S: int = int(LIMITS["map_vessel_age_s"]["max"])
+# Older than this and we no longer believe she is transmitting. Deliberately
+# shorter than MAX_VESSEL_AGE_S so a silent ship is still on the water to see —
+# limits.json argues the gap between the two.
+SILENT_AFTER_S: int = int(LIMITS["map_vessel_age_s"]["silent_after"])
 
 
 def clamp_interval(requested: Any, tier: str = "anon") -> int:

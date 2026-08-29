@@ -49,9 +49,10 @@ export function FilterChips() {
   );
 }
 
-/** The window the sentence speaks in, from the one limits file (F27) — the same
- *  number the api cuts the map snapshot at, never one typed in here. */
-const WINDOW_H = limits.map_vessel_age_s.max / 3600;
+/** The window the sentence speaks in, from the one limits file (F27), never typed
+ *  in here. `silent_after`, not `max`: the map keeps a ship for a day longer than
+ *  it believes in her, precisely so a silent one is still there to brighten. */
+const WINDOW_H = limits.map_vessel_age_s.silent_after / 3600;
 
 /** The result line under the chips — a sentence, not a count badge.
  *  The frame's mono "· longest gap 3 h 30 m" tail waits for M3: nothing measures

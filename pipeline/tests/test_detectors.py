@@ -14,13 +14,17 @@ from uuid import UUID, uuid4
 
 from ais_pipeline import limits
 from ais_pipeline.config import Settings
+from ais_pipeline.detectors.geo import ZONE_ANCHORAGE, ZONE_BERTH, PortHit
 from ais_pipeline.detectors.machine import (
     EVENT_COLUMNS,
     KIND_ANCHORAGE,
+    KIND_DEPARTURE,
     KIND_GAP,
     KIND_LOAD_DELTA,
+    KIND_PORT_CALL,
     Detector,
     EventRow,
+    ShipState,
 )
 from ais_pipeline.refinery.models import Parsed, PositionRow, StaticRow
 from ais_pipeline.refinery.parser import MSG_TYPE_POSITION, MSG_TYPE_STATIC
@@ -33,14 +37,30 @@ QUIET = 244660002
 DDL_KINDS = {"port_call", "anchorage", "gap", "load_delta", "departure"}
 
 
+# Three points instead of polygons: the ray casting is geo.py's own test, and
+# what the machine has to get right is which answer it believes.
+BERTH_LON, ANCHORAGE_LON = 4.1, 4.2
+LOCODE = "NLRTM"
+_MAP = {BERTH_LON: PortHit(LOCODE, ZONE_BERTH), ANCHORAGE_LON: PortHit(LOCODE, ZONE_ANCHORAGE)}
+
+
+def charted(lat: float, lon: float) -> PortHit | None:
+    return _MAP.get(lon)
+
+
 def det() -> Detector:
     return Detector(Settings(_env_file=None))
 
 
-def pos(minutes: int, sog: float, mmsi: int = MMSI, msg_type: int = MSG_TYPE_POSITION) -> Parsed:
+def det_charted() -> Detector:
+    return Detector(Settings(_env_file=None), charted)
+
+
+def pos(minutes: int, sog: float, mmsi: int = MMSI, msg_type: int = MSG_TYPE_POSITION,
+        lon: float = 4.0) -> Parsed:
     return Parsed(
         position=PositionRow(
-            ts=T0 + timedelta(minutes=minutes), mmsi=mmsi, lat=52.0, lon=4.0, sog=sog,
+            ts=T0 + timedelta(minutes=minutes), mmsi=mmsi, lat=52.0, lon=lon, sog=sog,
             cog=90.0, heading=90, nav_status=0, msg_type=msg_type, src="aisstream",
         )
     )
@@ -57,10 +77,11 @@ def static(minutes: int, draught: float, mmsi: int = MMSI) -> Parsed:
     )
 
 
-def drive(d: Detector, start: int, end: int, step: int, sog: float, mmsi: int = MMSI) -> None:
+def drive(d: Detector, start: int, end: int, step: int, sog: float, mmsi: int = MMSI,
+          lon: float = 4.0) -> None:
     """One fix every `step` minutes, at the same speed throughout."""
     for minute in range(start, end + 1, step):
-        d.handle_parsed(pos(minute, sog, mmsi))
+        d.handle_parsed(pos(minute, sog, mmsi, lon=lon))
 
 
 def test_a_slow_patch_that_does_not_hold_is_not_a_stop() -> None:
@@ -84,8 +105,67 @@ def test_a_real_stop_is_one_anchorage_with_its_start_and_its_duration() -> None:
     assert event.t_start == T0 + timedelta(minutes=15)   # when she came to rest
     assert event.t_end == T0 + timedelta(minutes=200)    # when she left, not when we knew
     assert event.meta == {"duration_s": 185 * 60}
-    assert event.port == ""  # until the polygons land (M3-T1)
+    assert event.port == ""  # no polygons given, so nowhere in particular
     assert d.ships[MMSI].state == "underway"
+
+
+def test_a_stop_alongside_a_berth_is_a_port_call_and_a_departure() -> None:
+    d = det_charted()
+    drive(d, 0, 10, 5, 8.0, lon=BERTH_LON)
+    drive(d, 15, 195, 5, 0.1, lon=BERTH_LON)
+    assert d.ships[MMSI].state == "moored"  # geography, not nav_status
+
+    drive(d, 200, 215, 5, 9.0, lon=BERTH_LON)
+    events = {e.kind: e for e in d.take_events()}
+    assert set(events) == {KIND_PORT_CALL, KIND_DEPARTURE}
+
+    call = events[KIND_PORT_CALL]
+    assert (call.t_start, call.t_end) == (T0 + timedelta(minutes=15), T0 + timedelta(minutes=200))
+    assert call.meta == {"duration_s": 185 * 60}
+    assert call.port == LOCODE
+
+    left = events[KIND_DEPARTURE]
+    assert left.t_start == left.t_end == call.t_end  # a moment, not a stretch
+    assert (left.port, left.meta) == (LOCODE, {})
+    assert d.ships[MMSI].state == "underway"
+    assert (d.ships[MMSI].port, d.ships[MMSI].zone) == ("", "")
+
+
+def test_a_wait_inside_an_anchorage_polygon_is_still_an_anchorage_but_named() -> None:
+    d = det_charted()
+    drive(d, 0, 10, 5, 8.0, lon=ANCHORAGE_LON)
+    drive(d, 15, 195, 5, 0.1, lon=ANCHORAGE_LON)
+    assert d.ships[MMSI].state == "anchored"
+
+    drive(d, 200, 215, 5, 9.0, lon=ANCHORAGE_LON)
+    events = d.take_events()
+    assert [e.kind for e in events] == [KIND_ANCHORAGE]
+    assert events[0].port == LOCODE
+
+
+def test_a_stop_in_open_water_is_unchanged_by_the_polygons() -> None:
+    d = det_charted()
+    drive(d, 0, 10, 5, 8.0)      # lon 4.0: the resolver knows nothing there
+    drive(d, 15, 195, 5, 0.1)
+    assert d.ships[MMSI].state == "anchored"
+
+    drive(d, 200, 215, 5, 9.0)
+    events = d.take_events()
+    assert [e.kind for e in events] == [KIND_ANCHORAGE]
+    assert events[0].port == ""
+
+
+def test_where_she_stopped_survives_a_snapshot_and_an_older_one_still_loads() -> None:
+    ship = ShipState(mmsi=MMSI, last_fix=T0, motion="moored", still_since=T0,
+                     anchorage_id=str(uuid4()), port=LOCODE, zone=ZONE_BERTH)
+    back = ShipState.from_json(ship.to_json())
+    assert (back.port, back.zone, back.motion) == (LOCODE, ZONE_BERTH, "moored")
+
+    # written before the ports landed: no port, no zone, and it must still load
+    old = json.loads(ship.to_json())
+    del old["port"], old["zone"]
+    stale = ShipState.from_json(json.dumps(old))
+    assert (stale.port, stale.zone) == ("", "")
 
 
 def test_a_gap_opens_after_the_silence_limit_and_closes_when_she_comes_back() -> None:
@@ -199,7 +279,7 @@ def test_the_lake_floor_gives_way_to_the_bus_replaying_older_history() -> None:
 def test_event_rows_match_the_events_table() -> None:
     """Column order and types per db/migrations/20260826200000_create_lake_tables.sql."""
     assert EVENT_COLUMNS == ("event_id", "mmsi", "kind", "t_start", "t_end", "port", "meta")
-    assert {KIND_ANCHORAGE, KIND_GAP, KIND_LOAD_DELTA} <= DDL_KINDS
+    assert {KIND_ANCHORAGE, KIND_GAP, KIND_LOAD_DELTA, KIND_PORT_CALL, KIND_DEPARTURE} <= DDL_KINDS
 
     values = EventRow(event_id=uuid4(), mmsi=MMSI, kind=KIND_GAP, t_start=T0, t_end=None,
                       port="", meta={"duration_s": 60}).as_tuple()

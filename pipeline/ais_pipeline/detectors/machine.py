@@ -7,12 +7,12 @@ at 77,153 of them. A machine that believed that field would file tens of
 thousands of arrivals a day that never happened. So a ship is judged by how
 fast she is going, and only once she has held it — still for T_STOP before she
 has stopped, moving for T_GO before she has left. The tie nav_status was meant
-to break is anchored against moored, and that one needs the port polygons
-(M3-T1), so at v0 it breaks nothing and steers nothing.
+to break is anchored against moored, and geography breaks it instead: the port
+polygons (geo.py) say which one, on the fix that opens the stop.
 
     under way ──(slow, held T_STOP)──> stopped ──(held T_ANCHOR_MIN)──> anchored
-        ^                                                                   │
-        └──────────────────(making way, held T_GO)──────────────────────────┘
+        ^                                                    └────────> moored │
+        └──────────────────(making way, held T_GO)──────────────────────────────┘
     any of them ──(no message for SILENT_AFTER_S)──> silent ──(any message)──> back
 
 Time is the stream's own, never the wall's: the watermark is the newest fix
@@ -28,7 +28,7 @@ left our receivers, and M3-T3 is what learns the difference.
 """
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -39,18 +39,27 @@ from ..limits import SILENT_AFTER_S
 from ..refinery.models import Parsed, PositionRow, StaticRow
 from ..refinery.parser import MSG_TYPE_POSITION, NotAVesselMessage, parse
 from ..refinery.state import UNDERWAY_MIN_SOG_KN as SOG_STILL
+from .geo import ZONE_BERTH, PortHit
 
 # events, in table column order (db/migrations/…_create_lake_tables.sql)
 EVENT_COLUMNS = ("event_id", "mmsi", "kind", "t_start", "t_end", "port", "meta")
 
 KIND_ANCHORAGE = "anchorage"
+KIND_PORT_CALL = "port_call"
+KIND_DEPARTURE = "departure"
 KIND_GAP = "gap"
 KIND_LOAD_DELTA = "load_delta"
 
 MOTION_UNDERWAY = "underway"
 MOTION_STOPPED = "stopped"
 MOTION_ANCHORED = "anchored"
+MOTION_MOORED = "moored"
 STATE_SILENT = "silent"
+
+
+def _nowhere(lat: float, lon: float) -> PortHit | None:
+    """No polygons given: every stop is open water, which is the old behaviour."""
+    return None
 
 SOG_NA = 102.3  # AIS spells "speed not available" as 102.3 kn
 DRAUGHT_NA = 0.0  # …and "draught not declared" as zero
@@ -68,7 +77,7 @@ class EventRow:
     kind: str
     t_start: datetime
     t_end: datetime | None
-    port: str  # UN/LOCODE once the polygons land (M3-T1); '' until then
+    port: str  # UN/LOCODE of the port she stopped in; '' in open water
     meta: dict[str, Any]
 
     def as_tuple(self) -> tuple[object, ...]:
@@ -105,6 +114,10 @@ class ShipState:
     draught: float | None = None
     anchorage_id: str | None = None
     gap_id: str | None = None
+    # Where the current stop is, decided once when it opened: the port's
+    # UN/LOCODE and which of its polygons held her. Both '' in open water.
+    port: str = ""
+    zone: str = ""
     # last_fix came out of the lake rather than off the bus — a floor for the
     # gap sweep, and nothing the replay has to respect.
     seeded: bool = False
@@ -124,6 +137,8 @@ class ShipState:
                 "draught": self.draught,
                 "anchorage_id": self.anchorage_id,
                 "gap_id": self.gap_id,
+                "port": self.port,
+                "zone": self.zone,
                 "seeded": self.seeded,
             },
             separators=(",", ":"),
@@ -144,6 +159,9 @@ class ShipState:
             draught=d["draught"],
             anchorage_id=d["anchorage_id"],
             gap_id=d["gap_id"],
+            # .get: snapshots written before the ports landed have neither.
+            port=str(d.get("port", "")),
+            zone=str(d.get("zone", "")),
             seeded=bool(d.get("seeded", False)),
         )
 
@@ -151,7 +169,12 @@ class ShipState:
 class Detector:
     """Raw messages in, buffered event rows out. No I/O — the service flushes."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        resolve: Callable[[float, float], PortHit | None] = _nowhere,
+    ) -> None:
+        self._resolve = resolve
         self._stop_dwell = timedelta(seconds=settings.stop_dwell_s)
         self._go_dwell = timedelta(seconds=settings.go_dwell_s)
         self._anchor_min = timedelta(seconds=settings.anchor_min_s)
@@ -219,7 +242,7 @@ class Detector:
             ship.moving_since = None
             if ship.still_since is None:
                 ship.still_since = row.ts
-            self._settle(ship, row.ts)
+            self._settle(ship, row.ts, row.lat, row.lon)
         else:
             if ship.moving_since is None:
                 ship.moving_since = row.ts
@@ -229,36 +252,60 @@ class Detector:
 
     # --- transitions ----------------------------------------------------
 
-    def _settle(self, ship: ShipState, ts: datetime) -> None:
+    def _settle(self, ship: ShipState, ts: datetime, lat: float, lon: float) -> None:
         """She has not moved. Promote her as far as the clock allows."""
         assert ship.still_since is not None
         held = ts - ship.still_since
         if ship.motion == MOTION_UNDERWAY and held >= self._stop_dwell:
             ship.motion = MOTION_STOPPED
         if ship.motion == MOTION_STOPPED and held >= self._anchor_min:
-            # The seam for M3-T1: a stopped ship inside a port polygon is moored
-            # and this is a port_call. Point-in-polygon goes here, on the fix
-            # that opens the event. Until the polygons land every stopped ship
-            # outside a port is anchored, which is true.
-            ship.motion = MOTION_ANCHORED
+            # The seam left for M3-T1 is closed: the polygons decide, not
+            # nav_status. Where she was standing when the stop became real is
+            # what the whole stop is called — inside a berth she is moored and
+            # this will be a port call, inside an anchorage or out in open
+            # water she is anchored. One lookup, on the fix that opens the
+            # event, because a swinging ship must not change her own verdict.
+            hit = self._resolve(lat, lon)
+            if hit is not None:
+                ship.port, ship.zone = hit.locode, hit.zone
+                if hit.zone == ZONE_BERTH:
+                    ship.motion = MOTION_MOORED
+            # The uuid identifies the stop, whatever we end up calling it.
+            if ship.motion == MOTION_STOPPED:
+                ship.motion = MOTION_ANCHORED
             ship.anchorage_id = str(uuid4())
 
     def _depart(self, ship: ShipState) -> None:
-        """She is making way again. Close the anchorage at the moment she left."""
+        """She is making way again. Close the stop at the moment she left."""
         assert ship.moving_since is not None
         if ship.anchorage_id is not None and ship.still_since is not None:
             waited = ship.moving_since - ship.still_since
+            berthed = ship.zone == ZONE_BERTH
             self._emit(
-                KIND_ANCHORAGE,
+                KIND_PORT_CALL if berthed else KIND_ANCHORAGE,
                 ship.mmsi,
                 t_start=ship.still_since,
                 t_end=ship.moving_since,
+                port=ship.port,
                 meta={"duration_s": int(waited.total_seconds())},
                 event_id=ship.anchorage_id,
             )
+            if berthed:
+                # A call is a stretch of time; leaving is a moment, and the two
+                # are separate rows because readers ask different questions of
+                # them — how long she was alongside, and when the berth freed.
+                self._emit(
+                    KIND_DEPARTURE,
+                    ship.mmsi,
+                    t_start=ship.moving_since,
+                    t_end=ship.moving_since,
+                    port=ship.port,
+                    meta={},
+                )
         ship.motion = MOTION_UNDERWAY
         ship.anchorage_id = None
         ship.still_since = None
+        ship.port = ship.zone = ""
 
     def _resume(self, ship: ShipState, ts: datetime) -> None:
         """A message after silence. Long enough silence is a gap, and it just closed."""
@@ -337,6 +384,7 @@ class Detector:
         t_start: datetime,
         t_end: datetime | None,
         meta: dict[str, Any],
+        port: str = "",
         event_id: str | None = None,
     ) -> None:
         self.events.append(
@@ -346,7 +394,7 @@ class Detector:
                 kind=kind,
                 t_start=t_start,
                 t_end=t_end,
-                port="",
+                port=port,
                 meta=meta,
             )
         )
@@ -401,8 +449,10 @@ class Detector:
 __all__ = [
     "EVENT_COLUMNS",
     "KIND_ANCHORAGE",
+    "KIND_DEPARTURE",
     "KIND_GAP",
     "KIND_LOAD_DELTA",
+    "KIND_PORT_CALL",
     "Detector",
     "EventRow",
     "ShipState",

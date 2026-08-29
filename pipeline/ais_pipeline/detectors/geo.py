@@ -19,8 +19,6 @@ separate hole bookkeeping.
 import json
 from typing import Any, NamedTuple
 
-import asyncpg
-
 ZONE_BERTH = "berth"
 ZONE_ANCHORAGE = "anchorage"
 
@@ -90,6 +88,10 @@ class PortResolver:
 
 async def load_ports(postgres_url: str) -> PortResolver:
     """Read the port polygons once, at start-up, and hand back a closed-over resolver."""
+    # Imported here so machine.py can take PortHit without dragging a database
+    # driver into the hot path's module graph.
+    import asyncpg
+
     conn = await asyncpg.connect(postgres_url)
     try:
         rows = await conn.fetch(

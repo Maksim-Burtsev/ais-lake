@@ -122,6 +122,24 @@ async def test_fixes_older_than_the_age_cut_are_off_the_map() -> None:
     assert payload["count"] == 1
 
 
+async def test_a_ship_unheard_for_a_day_is_drawn_silent() -> None:
+    """The state on the wire is the refinery's, except when the clock overrules it.
+
+    Nothing writes "silent": it is the absence of a message, and no message
+    arrives to announce it. The timestamp says it instead, which is why F7's chip
+    has something to count without a second writer on the refinery's key.
+    """
+    quiet = SILENT_AFTER_S + 3600  # a day and an hour, still inside the map window
+    fleet = {"244660000": field(NOW - quiet, 55.1, 3.2, 0.0, 87.0, "moored")}
+    payload = await snapshot_payload(FakeRedis(fleet))
+    assert payload["vessels"][0][5] == "silent"
+
+
+async def test_a_ship_heard_from_recently_keeps_her_own_state() -> None:
+    payload = await snapshot_payload(FakeRedis(NORTH_SEA))
+    assert {v[5] for v in payload["vessels"]} == {"underway", "moored"}
+
+
 async def test_a_text_ts_is_skipped_not_fatal() -> None:
     bad = {
         "1": json.dumps(["yesterday", 55.1, 3.2, 12.4, 87.0, "underway", "cargo3"]),

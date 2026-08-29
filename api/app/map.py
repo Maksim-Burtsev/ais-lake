@@ -18,7 +18,7 @@ import os
 import time
 from typing import Any, Protocol
 
-from .limits import MAX_VESSEL_AGE_S
+from .limits import MAX_VESSEL_AGE_S, SILENT_AFTER_S
 
 logger = logging.getLogger("map")
 
@@ -136,6 +136,15 @@ def _decode(mmsi: Any, field: Any, now: float, max_age: float | None) -> list[An
         return None
     if max_age is not None and now - ts > max_age:
         return None
+    # Silence is not a fact the refinery can write: it is the ABSENCE of one, and
+    # nothing arrives to record it. The detector knows who has gone quiet, but it
+    # would have to write into a key the refinery owns to say so. The timestamp
+    # already in this field answers it without a second writer — silent means we
+    # have not heard from her since `silent_after`, which is what the map paints
+    # coral and what F7's chip counts. She stays visible for another day (see
+    # limits.json), which is the whole point of the two windows being different.
+    if now - ts > SILENT_AFTER_S:
+        state = "silent"
     return [key, lat, lon, cog, sog, state, rest[0] if rest else UNKNOWN_SYM]
 
 

@@ -8,7 +8,7 @@
  *  are not built yet — rung 2 simply continues above z12.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 // Vite must bundle the worker itself: served raw in dev it gets the @vite/client
 // inject, which touches `document` and kills the worker (map never fires `load`).
@@ -202,11 +202,73 @@ async function fetchVessels(bbox: Bbox, zoom: number): Promise<Vessel[]> {
   return vessels;
 }
 
+/** F9 — the charted polygons, straight from /v1/map/ports. Static data: fetched
+ *  once per page, then handed to every rebuilt source (a theme swap wipes them).
+ *  A failed read is a map without polygons, not a map that fails. */
+const PORTS = 'ports';
+const PORT_FILL = 'ports-fill';
+const PORT_LINE = 'ports-line';
+const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
+let ports: Promise<FeatureCollection> | null = null;
+const fetchPorts = (): Promise<FeatureCollection> =>
+  (ports ??= fetch('/v1/map/ports')
+    .then((response) => {
+      if (!response.ok) throw new Error(`ports ${response.status}`);
+      return response.json() as Promise<FeatureCollection>;
+    })
+    .catch((error: unknown) => {
+      ports = null; // a style swap retries; a permanent failure just draws no polygons
+      console.warn('map: no port polygons —', error);
+      return EMPTY;
+    }));
+
+/** The frame's chart line: night's anchor ring, day's chart accent. */
+const chartLine = (theme: 'night' | 'day') =>
+  theme === 'night' ? tokens.color.night.vessel['anchor.ring'] : tokens.color.day['accent.chart'];
+
+/** hover lifts fill .05 -> .14 and stroke 1.8 -> 2.4 (frame `anchorageLayer`).
+ *  Only anchorages ever carry the state, so ports simply never take the lift. */
+const onHover = (lifted: number, base: number): maplibregl.ExpressionSpecification => [
+  'case',
+  ['boolean', ['feature-state', 'hover'], false],
+  lifted,
+  base,
+];
+
+/** Under the fleet: a polygon is water, the ships sit on it. Called from
+ *  `addVesselLayer` before the vessel layers exist, which is what puts it there. */
+function addPortsLayer(map: maplibregl.Map, theme: 'night' | 'day') {
+  if (map.getLayer(PORT_FILL)) return;
+  const color = chartLine(theme);
+  // generateId: the API rows carry no id, and setFeatureState needs one.
+  map.addSource(PORTS, { type: 'geojson', data: EMPTY, generateId: true });
+  map.addLayer({
+    id: PORT_FILL,
+    type: 'fill',
+    source: PORTS,
+    paint: { 'fill-color': color, 'fill-opacity': onHover(0.14, 0.05) },
+  });
+  map.addLayer({
+    id: PORT_LINE,
+    type: 'line',
+    source: PORTS,
+    paint: {
+      'line-color': color,
+      'line-width': onHover(2.4, 1.8),
+      'line-dasharray': [10, 6],
+    },
+  });
+  void fetchPorts().then((data) =>
+    map.getSource<maplibregl.GeoJSONSource>(PORTS)?.setData(data),
+  );
+}
+
 /** Sprites + source + layers. Re-run after every setStyle — a style swap wipes all
  *  of them, images included. Idempotent on live pieces: an existing source gets the
  *  data pushed (a theme swap can race the snapshot fetch), existing layers get their
  *  state colours repainted. */
 function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: FeatureCollection) {
+  addPortsLayer(map, theme);
   if (!map.hasImage('loz')) {
     for (const [name, image] of Object.entries(sprites())) {
       map.addImage(name, image, { sdf: true, pixelRatio: SPRITE_PIXEL_RATIO });
@@ -299,8 +361,17 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
   applyFilter(map, filter, theme, selection);
 }
 
+/** F9 — the hover panel, at the cursor. Name + the honest placeholder: the queue
+ *  numbers are F19 (M5) and nothing here invents one. */
+interface Tip {
+  x: number;
+  y: number;
+  name: string;
+}
+
 export function MapCanvas() {
   const container = useRef<HTMLDivElement>(null);
+  const [tip, setTip] = useState<Tip | null>(null);
 
   useEffect(() => {
     if (!container.current) return;
@@ -472,6 +543,26 @@ export function MapCanvas() {
       hit = undefined;
     });
 
+    // F9 — hover lifts the anchorage under the pointer and names it. Ports are
+    // drawn but not interactive: only an anchorage has a queue to offer.
+    let lifted: string | number | undefined;
+    const drop = () => {
+      if (lifted !== undefined) map.setFeatureState({ source: PORTS, id: lifted }, { hover: false });
+      lifted = undefined;
+      setTip(null);
+    };
+    map.on('mousemove', PORT_FILL, (event) => {
+      const found = event.features?.find((f) => f.properties.kind === 'anchorage');
+      if (!found) return drop();
+      if (found.id !== lifted) {
+        drop();
+        lifted = found.id;
+        map.setFeatureState({ source: PORTS, id: lifted }, { hover: true });
+      }
+      setTip({ x: event.point.x, y: event.point.y, name: String(found.properties.name) });
+    });
+    map.on('mouseleave', PORT_FILL, drop);
+
     // F6 — a region pick just flies: `moveend` fires at the end of the fly and is
     // the single fetch path (and what re-subscribes the socket), so fetching here
     // too only bought a second HGETALL whose answer was thrown away.
@@ -518,5 +609,45 @@ export function MapCanvas() {
 
   // h-full, not inset-0: maplibre's own CSS forces position:relative on the
   // container, which silently disables absolute positioning (height collapses to 0).
-  return <div ref={container} className="h-full w-full" />;
+  // The tooltip is a sibling, not a child: maplibre owns the container's children.
+  return (
+    <div className="relative h-full w-full">
+      <div ref={container} className="h-full w-full" />
+      {tip && (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-full"
+          style={{ left: tip.x, top: tip.y - 10 }}
+        >
+          <div
+            className="flex h-9 items-center whitespace-nowrap px-[14px] text-[13px]"
+            style={{
+              background: 'var(--chrome-tip-fill)',
+              border: '1px solid var(--chrome-tip-border)',
+              boxShadow: 'var(--chrome-tip-shadow)',
+              color: 'var(--chrome-tip-ink)',
+            }}
+          >
+            <span>
+              {tip.name} anchorage —{' '}
+              <span style={{ color: 'var(--chrome-tip-soft)' }}>queue counting starts soon</span>
+            </span>
+          </div>
+          <div
+            style={{
+              position: 'absolute',
+              bottom: -9,
+              left: 'calc(50% - 4.5px)',
+              width: 9,
+              height: 9,
+              transform: 'rotate(45deg)',
+              background: 'var(--chrome-tip-fill)',
+              borderRight: '1px solid var(--chrome-tip-border)',
+              borderBottom: '1px solid var(--chrome-tip-border)',
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
 }

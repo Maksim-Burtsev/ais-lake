@@ -125,6 +125,12 @@ const FRAME_EXTRAS = {
     'chrome-key-silent': '#FF6A52',
     'chrome-key-rule': '#1C3040',
     'chrome-key-count': '#E8B25C', // "2,412 SHIPS"
+    // F9 anchorage tooltip :: "Anchorage hover" (5e)
+    'chrome-tip-fill': 'rgba(10,22,32,.96)',
+    'chrome-tip-border': '#2A4457', // == color.night.border
+    'chrome-tip-shadow': '0 14px 34px rgba(0,0,0,.5)',
+    'chrome-tip-ink': '#F2EADB', // == color.night.text
+    'chrome-tip-soft': '#8FB8CC', // == color.night.vessel anchor.ring, the chart line
   },
   day: {
     'chrome-hairline': '#D8CDB4', // == color.day.border (top bar + search)
@@ -210,6 +216,13 @@ const FRAME_EXTRAS = {
     'chrome-key-silent': '#D8361F', // == color.day.signal
     'chrome-key-rule': '#D8CDB4', // == color.day.border
     'chrome-key-count': '#B8145A',
+    // F9 anchorage tooltip — no day frame for it: the day card's chrome, and the
+    // day chart line (== color.day accent.chart) for the second clause.
+    'chrome-tip-fill': '#FBF6EA',
+    'chrome-tip-border': '#C9BC9E',
+    'chrome-tip-shadow': '0 14px 34px rgba(8,40,64,.3)',
+    'chrome-tip-ink': '#0C1D28',
+    'chrome-tip-soft': '#B8145A',
   },
 };
 

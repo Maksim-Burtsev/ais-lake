@@ -159,6 +159,11 @@
   --chrome-key-silent: #FF6A52;
   --chrome-key-rule: #1C3040;
   --chrome-key-count: #E8B25C;
+  --chrome-tip-fill: rgba(10,22,32,.96);
+  --chrome-tip-border: #2A4457;
+  --chrome-tip-shadow: 0 14px 34px rgba(0,0,0,.5);
+  --chrome-tip-ink: #F2EADB;
+  --chrome-tip-soft: #8FB8CC;
   --chrome-hairline-strong: #2A4457;
   --chrome-sweep-track: #1C3040;
 }
@@ -290,4 +295,9 @@
   --chrome-key-silent: #D8361F;
   --chrome-key-rule: #D8CDB4;
   --chrome-key-count: #B8145A;
+  --chrome-tip-fill: #FBF6EA;
+  --chrome-tip-border: #C9BC9E;
+  --chrome-tip-shadow: 0 14px 34px rgba(8,40,64,.3);
+  --chrome-tip-ink: #0C1D28;
+  --chrome-tip-soft: #B8145A;
 }

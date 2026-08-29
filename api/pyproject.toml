@@ -10,6 +10,9 @@ dependencies = [
     "clickhouse-connect[async]>=0.8",
     "redis>=5.2",
     "websockets>=14",  # uvicorn's WS protocol — /v1/live has nothing to talk over without it
+    "alembic>=1.19.1",
+    "asyncpg>=0.31.0",
+    "sqlalchemy[asyncio]>=2.0.52",  # alembic's own dep; the [asyncio] extra is what asyncpg needs
 ]
 
 [dependency-groups]
@@ -41,4 +44,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "clickhouse_connect.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "asyncpg.*"
 ignore_missing_imports = true

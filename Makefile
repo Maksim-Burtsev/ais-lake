@@ -1,7 +1,7 @@
 # ais-lake — one box, two services, three stores.
 # Targets grow per milestone.
 
-.PHONY: dev dev-web down nuke migrate test seed e2e
+.PHONY: dev dev-web down nuke migrate geo test seed e2e
 
 dev:
 	docker compose up -d --wait
@@ -20,6 +20,14 @@ nuke:
 migrate:
 	cd pipeline && CLICKHOUSE_MIGRATE_URL=clickhouse://ais:ais-dev@localhost:9000/ais \
 		uv run migrator --path db/migrations up
+	cd api && DATABASE_URL=postgresql+asyncpg://ais:ais-dev@localhost:5432/ais \
+		uv run alembic upgrade head
+
+# The port polygons into PostGIS. Idempotent; run it after `migrate`.
+# Runs in api's venv — that is where asyncpg lives.
+geo:
+	cd api && POSTGRES_URL=postgresql://ais:ais-dev@localhost:5432/ais \
+		uv run python ../ops/geo/load_ports.py
 
 test:
 	cd pipeline && uv run ruff check . && uv run mypy ais_pipeline && uv run pytest -q

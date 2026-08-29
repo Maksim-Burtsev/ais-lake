@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # --- detectors ---
     detectors_group_id: str = "detectors"
 
+    # Port polygons are read from here once at start-up, never per fix
+    # (detectors/geo.py says why).
+    postgres_url: str = "postgresql://ais:ais-dev@localhost:5432/ais"
+
     # A ship has to hold a speed before we believe it, because nav_status flaps
     # (detectors/machine.py argues it with numbers). 20 min to call her stopped
     # because a ferry turns round in 30-45 and must still register; 10 to call

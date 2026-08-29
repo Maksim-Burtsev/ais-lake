@@ -10,6 +10,7 @@ dependencies = [
     "py-clickhouse-migrator>=0.1",
     "clickhouse-connect[async]>=0.8",
     "redis>=5.2",
+    "asyncpg>=0.30",
 ]
 
 [dependency-groups]
@@ -42,4 +43,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "clickhouse_connect.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "asyncpg.*"
 ignore_missing_imports = true

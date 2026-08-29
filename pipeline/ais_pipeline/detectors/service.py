@@ -56,7 +56,9 @@ class Ports:
         if self.loaded:
             return False
         try:
-            resolver = await self._load(self._url)
+            # Bounded: a stalled Postgres must not hold up the cycle tick —
+            # event flushing and the gap sweep run right behind this call.
+            resolver = await asyncio.wait_for(self._load(self._url), timeout=10.0)
         except Exception as exc:
             if not self._warned:  # one warning, not one per tick
                 self._warned = True

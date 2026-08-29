@@ -131,6 +131,22 @@ def test_a_stop_alongside_a_berth_is_a_port_call_and_a_departure() -> None:
     assert (d.ships[MMSI].port, d.ships[MMSI].zone) == ("", "")
 
 
+def test_a_moored_ship_restored_from_a_snapshot_still_closes_as_a_port_call() -> None:
+    # A restart mid-call: the verdict travels in the snapshot, not the resolver.
+    before = det_charted()
+    drive(before, 0, 10, 5, 8.0, lon=BERTH_LON)
+    drive(before, 15, 195, 5, 0.1, lon=BERTH_LON)
+    before.take_events()
+
+    after = det()  # blind on purpose: the restored zone must decide, not a lookup
+    after.restore(before.snapshot())
+    assert after.ships[MMSI].state == "moored"
+    drive(after, 200, 215, 5, 9.0, lon=BERTH_LON)
+    events = {e.kind: e for e in after.take_events()}
+    assert set(events) == {KIND_PORT_CALL, KIND_DEPARTURE}
+    assert events[KIND_PORT_CALL].port == LOCODE
+
+
 def test_a_wait_inside_an_anchorage_polygon_is_still_an_anchorage_but_named() -> None:
     d = det_charted()
     drive(d, 0, 10, 5, 8.0, lon=ANCHORAGE_LON)

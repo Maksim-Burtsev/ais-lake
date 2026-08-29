@@ -112,7 +112,13 @@ async def waiting_now(client: RedisClient | None, locode: str) -> int | None:
             ship = json.loads(raw)
         except ValueError:  # pragma: no cover — the detector writes json or nothing
             continue
-        if ship.get("zone") == "anchorage" and ship.get("port") == locode:
+        # A silent ship keeps her zone in the snapshot forever (the detector
+        # never evicts) — without the gap check the queue only ever grows.
+        if (
+            ship.get("zone") == "anchorage"
+            and ship.get("port") == locode
+            and ship.get("gap_id") is None
+        ):
             count += 1
     return count
 

@@ -53,7 +53,9 @@ services:
       redis:
         condition: service_healthy
       postgres:
-        condition: service_healthy
+        # started, not healthy: the detector starts blind and retries the port
+        # load herself — a broken Postgres must not keep gap detection down.
+        condition: service_started
     restart: unless-stopped
 
   api:

@@ -47,7 +47,7 @@ class DeadPool:
         raise ConnectionError("postgres is down")
 
 
-def ship(mmsi: int, port: str, zone: str) -> str:
+def ship(mmsi: int, port: str, zone: str, gap_id: str | None = None) -> str:
     """One snapshot field, exactly as ShipState.to_json writes it."""
     return json.dumps(
         {
@@ -58,7 +58,7 @@ def ship(mmsi: int, port: str, zone: str) -> str:
             "moving_since": None,
             "draught": 7.2,
             "anchorage_id": None,
-            "gap_id": None,
+            "gap_id": gap_id,
             "port": port,
             "zone": zone,
             "seeded": False,
@@ -74,6 +74,9 @@ SNAPSHOT = {
     "3": ship(3, "NL000", "berth"),
     "4": ship(4, "NL001", "anchorage"),
     "5": ship(5, "", ""),
+    # Anchored off NL000, then went silent: still in the snapshot forever
+    # (the detector never evicts) but no longer part of anyone's queue.
+    "6": ship(6, "NL000", "anchorage", gap_id="g-1"),
 }
 
 
@@ -161,7 +164,7 @@ async def test_the_panel_counts_its_own_anchorage_and_nobody_else_s() -> None:
     assert payload == {
         "locode": "NL000",
         "name": "Port 0",
-        "waiting_now": 2,  # the berthed ship and the neighbour's queue do not count
+        "waiting_now": 2,  # not the berthed ship, the neighbour's queue, or the silent one
         "typical_wait_h": 1.5,
         "band30d": None,
     }

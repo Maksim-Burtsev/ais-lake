@@ -43,6 +43,14 @@ def test_the_second_part_of_a_multipolygon_counts_as_much_as_the_first() -> None
     assert hit is not None and hit.locode == "DEHAM"
 
 
+def test_latitude_and_longitude_are_not_interchangeable() -> None:
+    # Every other polygon here is symmetric across lat=lon, so a swapped axis
+    # order inside the resolver would pass the whole file. This one is not.
+    r = PortResolver([("BEANR", multi(square(0, 0, 10, 2)), None)])  # lon 0..10, lat 0..2
+    assert r.resolve(lat=1.0, lon=8.0) == ("BEANR", "berth")
+    assert r.resolve(lat=8.0, lon=1.0) is None
+
+
 def test_open_water_belongs_to_nobody() -> None:
     r = PortResolver([("NLRTM", multi(square(0, 0, 10, 10)), multi(square(10, 10, 20, 20)))])
     assert r.resolve(lat=50.0, lon=50.0) is None

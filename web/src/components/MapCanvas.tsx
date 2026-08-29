@@ -377,21 +377,33 @@ interface Tip {
  *  rewrites its snapshot every 30 s and F19 promises a number no older than five
  *  minutes — a stale count on a hover is worse than one extra GET. */
 const QUEUE_TTL_MS = 60_000;
-const queues = new Map<string, { waiting: number | null; at: number }>();
+const queues = new Map<
+  string,
+  { waiting: Promise<number | null>; value: number | null; at: number }
+>();
 
-async function queueFor(locode: string): Promise<number | null> {
+/** The promise is cached, not the value: mousemove fires ~60 times a second and
+ *  every event during the first fetch's latency window must join it, not start
+ *  its own GET. */
+function queueFor(locode: string): Promise<number | null> {
   const held = queues.get(locode);
   if (held && Date.now() - held.at < QUEUE_TTL_MS) return held.waiting;
-  let waiting: number | null = null;
-  try {
-    const response = await fetch(`/v1/ports/${locode}`);
-    if (!response.ok) throw new Error(`port ${response.status}`);
-    const body = (await response.json()) as { waiting_now: number | null };
-    waiting = body.waiting_now;
-  } catch (error: unknown) {
-    console.warn('port queue:', error);
-  }
-  queues.set(locode, { waiting, at: Date.now() });
+  const waiting = (async (): Promise<number | null> => {
+    try {
+      const response = await fetch(`/v1/ports/${locode}`);
+      if (!response.ok) throw new Error(`port ${response.status}`);
+      const body = (await response.json()) as { waiting_now: number | null };
+      return body.waiting_now;
+    } catch (error: unknown) {
+      console.warn('port queue:', error);
+      return null;
+    }
+  })();
+  const entry = { waiting, value: held?.value ?? null, at: Date.now() };
+  queues.set(locode, entry);
+  void waiting.then((value) => {
+    entry.value = value;
+  });
   return waiting;
 }
 
@@ -588,7 +600,7 @@ export function MapCanvas() {
       const locode = String(found.properties.locode);
       const name = String(found.properties.name);
       const held = queues.get(locode);
-      setTip({ x: event.point.x, y: event.point.y, name, locode, waiting: held?.waiting ?? null });
+      setTip({ x: event.point.x, y: event.point.y, name, locode, waiting: held?.value ?? null });
       void queueFor(locode).then((waiting) =>
         setTip((shown) => (shown && shown.locode === locode ? { ...shown, waiting } : shown)),
       );

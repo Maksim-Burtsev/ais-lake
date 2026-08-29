@@ -361,12 +361,38 @@ function addVesselLayer(map: maplibregl.Map, theme: 'night' | 'day', data: Featu
   applyFilter(map, filter, theme, selection);
 }
 
-/** F9 — the hover panel, at the cursor. Name + the honest placeholder: the queue
- *  numbers are F19 (M5) and nothing here invents one. */
+/** F9 — the hover panel, at the cursor. The queue count is F19's own number, read
+ *  from /v1/ports/{locode}: the polygons are cached for the life of the process
+ *  and can never carry it. Until it lands — or if it never does — the tooltip
+ *  keeps the honest placeholder rather than guessing a zero. */
 interface Tip {
   x: number;
   y: number;
   name: string;
+  locode: string;
+  waiting: number | null;
+}
+
+/** ponytail: a Map keyed by locode, not a query cache. 60 s because the detector
+ *  rewrites its snapshot every 30 s and F19 promises a number no older than five
+ *  minutes — a stale count on a hover is worse than one extra GET. */
+const QUEUE_TTL_MS = 60_000;
+const queues = new Map<string, { waiting: number | null; at: number }>();
+
+async function queueFor(locode: string): Promise<number | null> {
+  const held = queues.get(locode);
+  if (held && Date.now() - held.at < QUEUE_TTL_MS) return held.waiting;
+  let waiting: number | null = null;
+  try {
+    const response = await fetch(`/v1/ports/${locode}`);
+    if (!response.ok) throw new Error(`port ${response.status}`);
+    const body = (await response.json()) as { waiting_now: number | null };
+    waiting = body.waiting_now;
+  } catch (error: unknown) {
+    console.warn('port queue:', error);
+  }
+  queues.set(locode, { waiting, at: Date.now() });
+  return waiting;
 }
 
 export function MapCanvas() {
@@ -559,7 +585,13 @@ export function MapCanvas() {
         lifted = found.id;
         map.setFeatureState({ source: PORTS, id: lifted }, { hover: true });
       }
-      setTip({ x: event.point.x, y: event.point.y, name: String(found.properties.name) });
+      const locode = String(found.properties.locode);
+      const name = String(found.properties.name);
+      const held = queues.get(locode);
+      setTip({ x: event.point.x, y: event.point.y, name, locode, waiting: held?.waiting ?? null });
+      void queueFor(locode).then((waiting) =>
+        setTip((shown) => (shown && shown.locode === locode ? { ...shown, waiting } : shown)),
+      );
     });
     map.on('mouseleave', PORT_FILL, drop);
 
@@ -630,7 +662,11 @@ export function MapCanvas() {
           >
             <span>
               {tip.name} anchorage —{' '}
-              <span style={{ color: 'var(--chrome-tip-soft)' }}>queue counting starts soon</span>
+              {tip.waiting === null ? (
+                <span style={{ color: 'var(--chrome-tip-soft)' }}>queue counting starts soon</span>
+              ) : (
+                <span>{tip.waiting} waiting</span>
+              )}
             </span>
           </div>
           <div

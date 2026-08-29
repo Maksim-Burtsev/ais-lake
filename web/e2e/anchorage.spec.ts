@@ -4,7 +4,7 @@ import { expect, test, type Page } from '@playwright/test';
  *  it and names it. /v1/map/ports is mocked with two squares around the map centre
  *  — a real anchorage is a ragged multipolygon whose interior no fixed cursor
  *  position can be trusted to hit. The queue numbers are F19 (M5), so the sentence
- *  is deliberately a placeholder and this spec pins that it stays honest. */
+ *  is a placeholder whenever the count is missing, and this spec pins both. */
 
 const SHOTS = 'test-results';
 const LON = 4.0;
@@ -42,8 +42,21 @@ interface MapHandle {
   ): { id?: number | string; state: { hover?: boolean } }[];
 }
 
-async function boot(page: Page, theme = 'night') {
+async function boot(page: Page, theme = 'night', queue: number | 'down' = 2) {
   await page.route('**/v1/map/ports', (route) => route.fulfill({ json: PORTS }));
+  await page.route('**/v1/ports/NLTST', (route) =>
+    queue === 'down'
+      ? route.fulfill({ status: 503, json: { detail: 'port unavailable' } })
+      : route.fulfill({
+          json: {
+            locode: 'NLTST',
+            name: 'Testhaven',
+            waiting_now: queue,
+            typical_wait_h: 1.5,
+            band30d: null,
+          },
+        }),
+  );
   await page.routeWebSocket('**/v1/live*', () => {});
   await page.goto(`/?theme=${theme}&z=9&c=${LON.toFixed(4)},${LAT.toFixed(4)}`);
   await expect
@@ -129,7 +142,9 @@ test('anchorage · hovering one lifts it and offers the queue, honestly', async 
 
   await page.mouse.move(anchorage.x, anchorage.y);
   await expect(tip(page)).toBeVisible();
-  await expect(tip(page)).toHaveText('Testhaven anchorage — queue counting starts soon');
+  // F19: the count comes from /v1/ports/{locode} — the polygons are cached and
+  // could never carry it — and matches what S3 prints for the same port.
+  await expect(tip(page)).toHaveText('Testhaven anchorage — 2 waiting');
   expect(await hovered(page, anchorage.x, anchorage.y)).toBe(1);
   await page.screenshot({ path: `${SHOTS}/anchorage-hover.png` });
 
@@ -145,4 +160,13 @@ test('anchorage · hovering one lifts it and offers the queue, honestly', async 
   await page.mouse.move(anchorage.x, anchorage.y + 300);
   await expect(tip(page)).toBeHidden();
   expect(await hovered(page, anchorage.x, anchorage.y)).toBe(0);
+});
+
+
+test('anchorage · no count is the placeholder, never a zero', async ({ page }) => {
+  await boot(page, 'night', 'down');
+  const anchorage = await pointFor(page, LON - 0.3, LAT);
+  await page.mouse.move(anchorage.x, anchorage.y);
+  await expect(tip(page)).toBeVisible();
+  await expect(tip(page)).toHaveText('Testhaven anchorage — queue counting starts soon');
 });

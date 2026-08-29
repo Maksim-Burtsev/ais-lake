@@ -22,6 +22,8 @@ MAX_VESSEL_AGE_S: int = int(LIMITS["map_vessel_age_s"]["max"])
 # shorter than MAX_VESSEL_AGE_S so a silent ship is still on the water to see —
 # limits.json argues the gap between the two.
 SILENT_AFTER_S: int = int(LIMITS["map_vessel_age_s"]["silent_after"])
+# The window "typical wait" is measured over (ports.py).
+PORT_WAIT_WINDOW_D: int = int(LIMITS["port_wait_window_d"]["days"])
 
 
 def clamp_interval(requested: Any, tier: str = "anon") -> int:

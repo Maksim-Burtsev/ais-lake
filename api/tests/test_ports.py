@@ -47,6 +47,73 @@ class DeadPool:
         raise ConnectionError("postgres is down")
 
 
+def ship(mmsi: int, port: str, zone: str) -> str:
+    """One snapshot field, exactly as ShipState.to_json writes it."""
+    return json.dumps(
+        {
+            "mmsi": mmsi,
+            "last_fix": 1756000000,
+            "motion": "anchored" if zone == "anchorage" else "moored",
+            "still_since": 1755990000,
+            "moving_since": None,
+            "draught": 7.2,
+            "anchorage_id": None,
+            "gap_id": None,
+            "port": port,
+            "zone": zone,
+            "seeded": False,
+        },
+        separators=(",", ":"),
+    )
+
+
+# Two waiting at NL000, one berthed there, one waiting at the port next door.
+SNAPSHOT = {
+    "1": ship(1, "NL000", "anchorage"),
+    "2": ship(2, "NL000", "anchorage"),
+    "3": ship(3, "NL000", "berth"),
+    "4": ship(4, "NL001", "anchorage"),
+    "5": ship(5, "", ""),
+}
+
+
+class FakeRedis:
+    def __init__(self, fields: dict[str, str] | None = None) -> None:
+        self._fields = SNAPSHOT if fields is None else fields
+
+    async def hgetall(self, name: str) -> dict[str, str]:
+        assert name == "detector:north-sea"
+        return dict(self._fields)
+
+    async def hget(self, name: str, key: str) -> str | None:  # pragma: no cover
+        return self._fields.get(key)
+
+
+class DeadRedis(FakeRedis):
+    async def hgetall(self, name: str) -> dict[str, str]:
+        raise ConnectionError("redis is down")
+
+
+class FakeResult:
+    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+        self.result_rows = rows
+
+
+class FakeClickHouse:
+    def __init__(self, seconds: float | None = 5400.0) -> None:
+        self.params: dict[str, Any] = {}
+        self._seconds = seconds
+
+    async def query(self, query: str, parameters: dict[str, Any]) -> FakeResult:
+        self.params = parameters
+        return FakeResult([(self._seconds,)])
+
+
+class DeadClickHouse:
+    async def query(self, query: str, parameters: dict[str, Any]) -> FakeResult:
+        raise ConnectionError("clickhouse is down")
+
+
 @pytest.fixture(autouse=True)
 def _clear_cache() -> Any:
     ports_module._cache = None
@@ -83,28 +150,43 @@ async def test_no_postgres_is_a_503_not_an_empty_map() -> None:
     with pytest.raises(PortsUnavailable):
         await ports_geojson(None)
     with pytest.raises(PortsUnavailable):
-        await port_payload(None, "NL000")
+        await port_payload(None, None, None, "NL000")
     with pytest.raises(PortsUnavailable):
-        await port_payload(DeadPool(), "NL000")
+        await port_payload(DeadPool(), None, None, "NL000")
 
 
-async def test_the_port_panel_starts_with_its_numbers_null() -> None:
-    payload = await port_payload(FakePool(), "NL000")
+async def test_the_panel_counts_its_own_anchorage_and_nobody_else_s() -> None:
+    ch = FakeClickHouse()
+    payload = await port_payload(FakePool(), FakeRedis(), ch, "NL000")
     assert payload == {
         "locode": "NL000",
         "name": "Port 0",
-        "waiting_now": None,
-        "typical_wait_h": None,
+        "waiting_now": 2,  # the berthed ship and the neighbour's queue do not count
+        "typical_wait_h": 1.5,
         "band30d": None,
     }
+    assert ch.params == {"locode": "NL000", "days": 7}
+
+
+async def test_a_store_that_cannot_answer_leaves_null_never_zero() -> None:
+    payload = await port_payload(FakePool(), DeadRedis(), DeadClickHouse(), "NL000")
+    assert payload is not None
+    assert payload["waiting_now"] is None and payload["typical_wait_h"] is None
+    # no stores at all, and no snapshot written yet: same nulls.
+    for redis_client, ch in ((None, None), (FakeRedis(fields={}), FakeClickHouse(seconds=None))):
+        payload = await port_payload(FakePool(), redis_client, ch, "NL000")
+        assert payload is not None
+        assert payload["waiting_now"] is None and payload["typical_wait_h"] is None
 
 
 async def test_a_lowercase_locode_finds_the_same_port() -> None:
-    assert await port_payload(FakePool(), "nl000") == await port_payload(FakePool(), "NL000")
+    assert await port_payload(FakePool(), None, None, "nl000") == await port_payload(
+        FakePool(), None, None, "NL000"
+    )
 
 
 async def test_an_unknown_locode_is_none_so_the_route_can_404() -> None:
-    assert await port_payload(FakePool(), "XXXXX") is None
+    assert await port_payload(FakePool(), None, None, "XXXXX") is None
 
 
 async def test_an_empty_table_is_served_but_never_cached() -> None:

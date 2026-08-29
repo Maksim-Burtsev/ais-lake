@@ -5,6 +5,10 @@
     "default": 10,
     "floor": { "anon": 10, "free": 5 }
   },
+  "port_wait_window_d": {
+    "$comment": "How far back /v1/ports/{locode} looks for finished anchorages when it says 'typical wait' (F19). A week: long enough that a quiet Sunday does not empty the sample, short enough that the number still describes the queue a ship joins today. Widen it and the figure stops being news.",
+    "days": 7
+  },
   "map_vessel_age_s": {
     "$comment": "Two numbers, and they have to differ. `silent_after` is when we stop believing a ship is still transmitting: past it she is drawn silent and counted by F7's 'Recently silent' chip. `max` is when she leaves the map entirely, because the refinery's hot hash keeps a field forever and without the cut the fleet is padded with ships that stopped reporting days ago. Setting both to 24 h made a ship go silent in the same instant she vanished, so the chip could never show anybody — F7 says 'brights <=24 h silents', which only means something if a silent ship is still on the water to brighten. So: silent at 24 h, gone at 48 h, and a full day in between where she is visible AND silent. M3's gap detector opens its event at `silent_after` for the same reason.",
     "silent_after": 86400,

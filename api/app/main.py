@@ -148,10 +148,11 @@ async def map_ports() -> dict[str, Any]:
 
 @app.get("/v1/ports/{locode}")
 async def port(locode: str) -> dict[str, Any]:
-    """F14's panel skeleton: the port's identity, with the queue numbers still
-    null until the detector fills them. An unknown locode 404s."""
+    """F14/F19's panel: the port's identity from Postgres, its queue from the
+    detector's snapshot and its typical wait from the lake. A store that cannot
+    answer leaves its number null rather than zero. An unknown locode 404s."""
     try:
-        payload = await port_payload(runtime.postgres, locode)
+        payload = await port_payload(runtime.postgres, runtime.redis, runtime.clickhouse, locode)
     except PortsUnavailable as exc:
         raise HTTPException(503, "port unavailable") from exc
     if payload is None:

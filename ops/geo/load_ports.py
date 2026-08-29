@@ -50,6 +50,10 @@ def rows(geojson: dict[str, Any]) -> tuple[list[tuple[str, str, str, str]], list
     orphans = sorted({locode for locode, _ in anchorages} - known)
     if orphans:
         raise ValueError(f"anchorages for unknown locodes: {', '.join(orphans)}")
+    seen = [locode for locode, _ in anchorages]
+    dupes = sorted({locode for locode in seen if seen.count(locode) > 1})
+    if dupes:
+        raise ValueError(f"two anchorage features for one locode: {', '.join(dupes)}")
     return ports, anchorages
 
 
@@ -67,8 +71,11 @@ async def check_valid(conn: asyncpg.Connection, label: str, geoms: list[tuple[st
 async def check_no_overlap(conn: asyncpg.Connection, anchorages: list[tuple[str, str]]) -> None:
     for i, (a_code, a_geom) in enumerate(anchorages):
         for b_code, b_geom in anchorages[i + 1 :]:
+            # Interiors sharing any water — ST_Overlaps alone misses the case
+            # where one anchorage sits wholly inside another.
             if await conn.fetchval(
-                "SELECT ST_Overlaps(ST_GeomFromGeoJSON($1), ST_GeomFromGeoJSON($2))",
+                "SELECT ST_Intersects(a, b) AND NOT ST_Touches(a, b) FROM "
+                "(SELECT ST_GeomFromGeoJSON($1) AS a, ST_GeomFromGeoJSON($2) AS b) t",
                 a_geom,
                 b_geom,
             ):
@@ -83,6 +90,16 @@ async def main() -> None:
         await check_valid(conn, "anchorage", anchorages)
         await check_no_overlap(conn, anchorages)
         async with conn.transaction():
+            # Idempotent for removals too: a port dropped from the geojson leaves
+            # the table, an anchorage dropped from it clears its column.
+            await conn.execute(
+                "DELETE FROM ports WHERE locode != ALL($1)",
+                [locode for locode, *_ in ports],
+            )
+            await conn.execute(
+                "UPDATE ports SET anchorages = NULL WHERE locode != ALL($1)",
+                [locode for locode, _ in anchorages],
+            )
             await conn.executemany(
                 """
                 INSERT INTO ports (locode, name, kind, geom)

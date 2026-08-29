@@ -105,3 +105,35 @@ async def test_a_lowercase_locode_finds_the_same_port() -> None:
 
 async def test_an_unknown_locode_is_none_so_the_route_can_404() -> None:
     assert await port_payload(FakePool(), "XXXXX") is None
+
+
+async def test_an_empty_table_is_served_but_never_cached() -> None:
+    # migrate ran, make geo hasn't: the next call must hit the table again.
+    empty = FakePool(rows=[])
+    assert (await ports_geojson(empty))["features"] == []
+    assert len((await ports_geojson(FakePool()))["features"]) == 15
+
+
+async def test_routes_map_no_postgres_to_503_and_unknown_locode_to_404() -> None:
+    from fastapi import HTTPException
+
+    from app.main import map_ports, port, runtime
+
+    original = runtime.postgres
+    try:
+        runtime.postgres = None
+        with pytest.raises(HTTPException) as err:
+            await map_ports()
+        assert err.value.status_code == 503
+        with pytest.raises(HTTPException) as err:
+            await port("NLRTM")
+        assert err.value.status_code == 503
+
+        runtime.postgres = FakePool()  # type: ignore[assignment]
+        with pytest.raises(HTTPException) as err:
+            await port("XXXXX")
+        assert err.value.status_code == 404
+        assert (await map_ports())["type"] == "FeatureCollection"
+        assert (await port("NL000"))["waiting_now"] is None
+    finally:
+        runtime.postgres = original

@@ -61,8 +61,12 @@ async def ports_geojson(pool: Pool | None) -> dict[str, Any]:
         features.append(_feature(row, "port", row["geom"]))
         if row["anchorages"] is not None:
             features.append(_feature(row, "anchorage", row["anchorages"]))
-    _cache = {"type": "FeatureCollection", "features": features}
-    return _cache
+    collection = {"type": "FeatureCollection", "features": features}
+    # An empty table is the not-yet-loaded state (migrate ran, make geo hasn't):
+    # caching it would pin a portless map until restart. Cache only real content.
+    if features:
+        _cache = collection
+    return collection
 
 
 async def port_payload(pool: Pool | None, locode: str) -> dict[str, Any] | None:

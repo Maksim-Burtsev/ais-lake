@@ -111,12 +111,11 @@ test('anchorage · the polygons are drawn under the fleet, in both themes', asyn
   await expect
     .poll(
       () =>
-        page.evaluate(() =>
-          (window as unknown as { __map?: MapHandle }).__map?.getPaintProperty(
-            'ports-fill',
-            'fill-color',
-          ),
-        ),
+        page.evaluate(() => {
+          // mid-setStyle the layer is gone; getPaintProperty would throw.
+          const map = (window as unknown as { __map?: MapHandle }).__map;
+          return map?.getLayer('ports-fill') ? map.getPaintProperty('ports-fill', 'fill-color') : null;
+        }),
       {
         timeout: 30_000,
       },

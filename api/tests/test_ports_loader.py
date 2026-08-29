@@ -44,6 +44,24 @@ def test_an_anchorage_without_its_port_is_an_error() -> None:
         raise AssertionError("expected a ValueError for the orphaned anchorage")
 
 
+def test_two_anchorages_for_one_locode_is_an_error() -> None:
+    """The second UPDATE would silently overwrite the first polygon."""
+    try:
+        load_ports.rows(
+            {
+                "features": [
+                    feature("NLRTM", "port"),
+                    feature("NLRTM", "anchorage"),
+                    feature("NLRTM", "anchorage"),
+                ]
+            }
+        )
+    except ValueError as exc:
+        assert "NLRTM" in str(exc)
+    else:
+        raise AssertionError("expected a ValueError for the duplicate anchorage")
+
+
 def test_the_real_file_is_twelve_ports_and_three_anchorages() -> None:
     ports, anchorages = load_ports.rows(json.loads(load_ports.GEOJSON.read_text()))
     assert len(ports) == 12

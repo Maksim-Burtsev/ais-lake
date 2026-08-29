@@ -62,6 +62,22 @@ class Settings(BaseSettings):
     clickhouse_password: str = "ais-dev"
     clickhouse_database: str = "ais"
 
+    # --- detectors ---
+    detectors_group_id: str = "detectors"
+
+    # A ship has to hold a speed before we believe it, because nav_status flaps
+    # (detectors/machine.py argues it with numbers). 20 min to call her stopped
+    # because a ferry turns round in 30-45 and must still register; 10 to call
+    # her gone, since leaving is the less ambiguous half; 30 before a stop is a
+    # wait rather than a manoeuvre. The silence threshold is not here — it is a
+    # product limit and lives in limits.json (F27).
+    stop_dwell_s: int = 20 * 60
+    go_dwell_s: int = 10 * 60
+    anchor_min_s: int = 30 * 60
+    # AIS reports draught to 0.1 m, so 0.3 clears the reporting noise.
+    draught_min_delta_m: float = 0.3
+    snapshot_interval_s: float = 30.0
+
     # --- offline seed (Danish Maritime Authority daily dumps) ---
     seed_base_url: str = "http://aisdata.ais.dk"
     seed_days: int = 7

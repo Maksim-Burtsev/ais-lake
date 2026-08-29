@@ -41,6 +41,7 @@ services:
       KAFKA_BOOTSTRAP: redpanda:9092
       REDIS_URL: redis://redis:6379/0
       CLICKHOUSE_HOST: clickhouse
+      POSTGRES_URL: postgresql://ais:ais-dev@postgres:5432/ais   # port polygons, read once
       LIMITS_PATH: /limits.json    # the gap threshold is a product limit, not a setting
     volumes:
       - ./limits.json:/limits.json:ro   # outside the ./pipeline build context, as for the api
@@ -50,6 +51,8 @@ services:
       clickhouse:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 

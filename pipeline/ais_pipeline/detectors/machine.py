@@ -174,7 +174,8 @@ class Detector:
         settings: Settings,
         resolve: Callable[[float, float], PortHit | None] = _nowhere,
     ) -> None:
-        self._resolve = resolve
+        # Swapped in by the service once Postgres answers (service.py: Ports).
+        self.resolve = resolve
         self._stop_dwell = timedelta(seconds=settings.stop_dwell_s)
         self._go_dwell = timedelta(seconds=settings.go_dwell_s)
         self._anchor_min = timedelta(seconds=settings.anchor_min_s)
@@ -265,7 +266,7 @@ class Detector:
             # this will be a port call, inside an anchorage or out in open
             # water she is anchored. One lookup, on the fix that opens the
             # event, because a swinging ship must not change her own verdict.
-            hit = self._resolve(lat, lon)
+            hit = self.resolve(lat, lon)
             if hit is not None:
                 ship.port, ship.zone = hit.locode, hit.zone
                 if hit.zone == ZONE_BERTH:

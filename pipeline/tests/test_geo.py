@@ -6,7 +6,10 @@ it, so these tests fail if the ray cast or the berth-first order ever drifts.
 
 import json
 
+from ais_pipeline.config import Settings
 from ais_pipeline.detectors.geo import PortResolver
+from ais_pipeline.detectors.machine import Detector
+from ais_pipeline.detectors.service import Ports
 
 
 def square(x0: float, y0: float, x1: float, y1: float) -> list[list[tuple[float, float]]]:
@@ -54,3 +57,37 @@ def test_a_berth_wins_over_an_anchorage_drawn_across_it() -> None:
 def test_a_ship_only_in_the_anchorage_is_waiting_off_that_port() -> None:
     r = PortResolver([("NLRTM", multi(square(0, 0, 10, 10)), multi(square(0, 0, 30, 30)))])
     assert r.resolve(lat=25.0, lon=25.0) == ("NLRTM", "anchorage")
+
+
+class FlakyLoader:
+    """Postgres that refuses twice, then hands over the polygons."""
+
+    def __init__(self, resolver: PortResolver) -> None:
+        self.calls = 0
+        self._resolver = resolver
+
+    async def __call__(self, url: str) -> PortResolver:
+        self.calls += 1
+        if self.calls <= 2:
+            raise OSError("connection refused")
+        return self._resolver
+
+
+async def test_the_ports_land_on_the_tick_after_postgres_answers() -> None:
+    resolver = PortResolver([("NLRTM", multi(square(0, 0, 10, 10)), None)])
+    detector = Detector(Settings())
+    blind = detector.resolve
+    loader = FlakyLoader(resolver)
+    ports = Ports(detector, "postgresql://nowhere", loader)
+
+    assert await ports.attempt() is False
+    assert await ports.attempt() is False
+    assert detector.resolve is blind  # still blind: every stop is an anchorage
+
+    assert await ports.attempt() is True
+    assert detector.resolve.__self__ is resolver  # type: ignore[attr-defined]
+    assert detector.resolve(5.0, 5.0) == ("NLRTM", "berth")
+
+    # Loaded once and never again — the tick keeps calling, Postgres does not.
+    assert await ports.attempt() is False
+    assert loader.calls == 3

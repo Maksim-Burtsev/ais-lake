@@ -13,6 +13,7 @@ sweep would record a state the next second contradicts.
 import asyncio
 import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from aiokafka import AIOKafkaConsumer
@@ -20,10 +21,55 @@ from aiokafka import AIOKafkaConsumer
 from ..config import Settings
 from ..incidents import IncidentSink, record_incident
 from ..log import kv, setup
+from .geo import PortResolver, load_ports
 from .machine import Detector
 from .sinks import EventWriter, SnapshotStore
 
 logger = logging.getLogger("detectors")
+
+
+class Ports:
+    """The port polygons, whenever Postgres gets round to answering.
+
+    Starting blind beats not starting (as with rebuild): without polygons every
+    stop is an anchorage, which is wrong but readable. The cycle tick retries
+    until the load succeeds, then swaps the detector's resolver.
+
+    ponytail: loaded once and never reloaded — the polygons are static for the
+    life of the process, a new port list arrives with a restart.
+    """
+
+    def __init__(
+        self,
+        detector: Detector,
+        postgres_url: str,
+        load: Callable[[str], Awaitable[PortResolver]] = load_ports,
+    ) -> None:
+        self._detector = detector
+        self._url = postgres_url
+        self._load = load
+        self._warned = False
+        self.loaded = False
+
+    async def attempt(self) -> bool:
+        """Try once. True the tick the ports land, False every other time."""
+        if self.loaded:
+            return False
+        try:
+            resolver = await self._load(self._url)
+        except Exception as exc:
+            if not self._warned:  # one warning, not one per tick
+                self._warned = True
+                logger.warning(kv(
+                    "detector_ports_unavailable",
+                    reason=type(exc).__name__, detail=str(exc)[:200],
+                    note="every stop counts as anchorage until Postgres answers",
+                ))
+            return False
+        self._detector.resolve = resolver.resolve
+        self.loaded = True
+        logger.info(kv("detector_ports_loaded"))
+        return True
 
 
 async def cycle(detector: Detector, lake: EventWriter, snaps: SnapshotStore) -> None:
@@ -53,10 +99,13 @@ async def cycle_forever(
     snaps: SnapshotStore,
     interval_s: float,
     incidents: IncidentSink | None = None,
+    ports: Ports | None = None,
 ) -> None:
     while True:
         await asyncio.sleep(interval_s)
         try:
+            if ports is not None:
+                await ports.attempt()
             await cycle(detector, lake, snaps)
         except Exception as exc:  # a bad tick must not take the service down
             reason, detail = type(exc).__name__, str(exc)[:200]
@@ -112,13 +161,15 @@ async def run(settings: Settings) -> None:
     await snaps.start()
     await consumer.start()
     await rebuild(detector, lake, snaps)
+    ports = Ports(detector, settings.postgres_url)
+    await ports.attempt()
     logger.info(kv("detector_start", topic=settings.raw_topic,
                    group=settings.detectors_group_id, region=settings.region_slug,
                    stop_dwell_s=settings.stop_dwell_s, go_dwell_s=settings.go_dwell_s,
                    anchor_min_s=settings.anchor_min_s))
 
     ticker = asyncio.create_task(
-        cycle_forever(detector, lake, snaps, settings.snapshot_interval_s, snaps.client)
+        cycle_forever(detector, lake, snaps, settings.snapshot_interval_s, snaps.client, ports)
     )
     try:
         await consume(consumer, detector)

@@ -30,6 +30,14 @@ class EventWriter(ClickHouseWriter):
     async def insert_events(self, rows: list[EventRow]) -> None:
         await self._insert(EVENTS_TABLE, [r.as_tuple() for r in rows], EVENT_COLUMNS)
 
+    async def fetch(self, query: str) -> list[tuple[Any, ...]]:
+        """Run a read query and hand back its rows — the coverage model's one call."""
+        if self._client is None:  # pragma: no cover — start() precedes every call
+            return []
+        result = await self._client.query(query)
+        rows: list[tuple[Any, ...]] = result.result_rows
+        return rows
+
     async def last_fixes(self) -> dict[int, datetime]:
         """When we last heard from each ship — the cold-start floor for gaps."""
         if self._client is None:  # pragma: no cover — start() precedes every call

@@ -39,6 +39,7 @@ from ..limits import SILENT_AFTER_S
 from ..refinery.models import Parsed, PositionRow, StaticRow
 from ..refinery.parser import MSG_TYPE_POSITION, NotAVesselMessage, parse
 from ..refinery.state import UNDERWAY_MIN_SOG_KN as SOG_STILL
+from .coverage import CLASS_UNKNOWN, CoverageModel
 from .geo import ZONE_BERTH, PortHit
 
 # events, in table column order (db/migrations/…_create_lake_tables.sql)
@@ -64,8 +65,9 @@ def _nowhere(lat: float, lon: float) -> PortHit | None:
 SOG_NA = 102.3  # AIS spells "speed not available" as 102.3 kn
 DRAUGHT_NA = 0.0  # …and "draught not declared" as zero
 
-# v0 says only that we do not know why she went quiet. M3-T3 replaces the word.
-GAP_CLASSIFICATION = "coverage-unknown"
+# What we say when no coverage model has answered: we do not know why she went
+# quiet. With a model loaded, coverage.py replaces the word (F13).
+GAP_CLASSIFICATION = CLASS_UNKNOWN
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +123,13 @@ class ShipState:
     # The port's display name, carried so the sentence can say "Moored in
     # Rotterdam" — a locode on a public page would break the voice rule.
     port_name: str = ""
+    # Where she was last heard — the coverage model needs a position to look up
+    # a cell, and the gap sweep runs long after the fix has gone by.
+    last_lat: float | None = None
+    last_lon: float | None = None
+    # The coverage verdict, taken when the gap opened because that is when its
+    # inputs were true, carried until the gap closes and the row is written.
+    gap_verdict: dict[str, Any] | None = None
     # last_fix came out of the lake rather than off the bus — a floor for the
     # gap sweep, and nothing the replay has to respect.
     seeded: bool = False
@@ -143,6 +152,9 @@ class ShipState:
                 "port": self.port,
                 "zone": self.zone,
                 "port_name": self.port_name,
+                "last_lat": self.last_lat,
+                "last_lon": self.last_lon,
+                "gap_verdict": self.gap_verdict,
                 "seeded": self.seeded,
             },
             separators=(",", ":"),
@@ -167,6 +179,9 @@ class ShipState:
             port=str(d.get("port", "")),
             zone=str(d.get("zone", "")),
             port_name=str(d.get("port_name", "")),
+            last_lat=d.get("last_lat"),
+            last_lon=d.get("last_lon"),
+            gap_verdict=d.get("gap_verdict"),
             seeded=bool(d.get("seeded", False)),
         )
 
@@ -178,9 +193,13 @@ class Detector:
         self,
         settings: Settings,
         resolve: Callable[[float, float], PortHit | None] = _nowhere,
+        coverage: CoverageModel | None = None,
     ) -> None:
         # Swapped in by the service once Postgres answers (service.py: Ports).
         self.resolve = resolve
+        # …and reloaded every quarter of an hour (service.py: Coverage). None
+        # until the lake answers, and then every gap is coverage-unknown.
+        self.coverage = coverage
         self._stop_dwell = timedelta(seconds=settings.stop_dwell_s)
         self._go_dwell = timedelta(seconds=settings.go_dwell_s)
         self._anchor_min = timedelta(seconds=settings.anchor_min_s)
@@ -241,7 +260,11 @@ class Detector:
         # fleet for a moment every six minutes, and no ship under way would ever
         # hold T_GO long enough to be called departed. It counts as a message —
         # she is transmitting — and as nothing else.
-        if row.msg_type != MSG_TYPE_POSITION or row.sog >= SOG_NA:
+        if row.msg_type != MSG_TYPE_POSITION:
+            return ship
+        # A real position: remember where, for the coverage lookup at gap open.
+        ship.last_lat, ship.last_lon = row.lat, row.lon
+        if row.sog >= SOG_NA:
             return ship
 
         if row.sog < SOG_STILL:
@@ -328,10 +351,12 @@ class Detector:
                 meta={
                     "duration_s": int(silence.total_seconds()),
                     "classification": GAP_CLASSIFICATION,
+                    **(ship.gap_verdict or {}),
                 },
                 event_id=ship.gap_id,
             )
         ship.gap_id = None
+        ship.gap_verdict = None
         ship.last_fix = ts
 
     def _on_draught(self, ship: ShipState, static: StaticRow) -> None:
@@ -379,9 +404,44 @@ class Detector:
         if self.watermark is None:
             return
         cutoff = self.watermark - self._silent_after
+        opening = [s for s in self.ships.values()
+                   if s.gap_id is None and s.last_fix <= cutoff]
+        if not opening:
+            return
+        online = self._online_by_cell(cutoff)
+        for ship in opening:
+            ship.gap_id = str(uuid4())
+            ship.gap_verdict = self._verdict(ship, online)
+
+    def _online_by_cell(self, cutoff: datetime) -> dict[tuple[float, float], int]:
+        """How many ships are still being heard in each cell, right now.
+
+        The neighbours are the other half of the question: a cell that normally
+        hears six ships and is hearing five of them this minute did not just
+        lose its receiver. Built once per sweep and only when a gap is opening
+        — one pass over the fleet, and most ticks open nothing at all.
+        """
+        counts: dict[tuple[float, float], int] = {}
+        if self.coverage is None:
+            return counts
         for ship in self.ships.values():
-            if ship.gap_id is None and ship.last_fix <= cutoff:
-                ship.gap_id = str(uuid4())
+            if ship.last_fix <= cutoff or ship.last_lat is None or ship.last_lon is None:
+                continue
+            cell = self.coverage.cell_of(ship.last_lat, ship.last_lon)
+            if cell is not None:
+                counts[cell] = counts.get(cell, 0) + 1
+        return counts
+
+    def _verdict(
+        self, ship: ShipState, online: dict[tuple[float, float], int]
+    ) -> dict[str, Any] | None:
+        if self.coverage is None or ship.last_lat is None or ship.last_lon is None:
+            return None
+        cell = self.coverage.cell_of(ship.last_lat, ship.last_lon)
+        neighbours = online.get(cell, 0) if cell is not None else 0
+        verdict = self.coverage.classify(ship.last_lat, ship.last_lon, neighbours)
+        return {"classification": verdict.classification,
+                "confidence": verdict.confidence, **verdict.stats}
 
     def _emit(
         self,

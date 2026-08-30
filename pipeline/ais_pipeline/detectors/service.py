@@ -21,6 +21,7 @@ from aiokafka import AIOKafkaConsumer
 from ..config import Settings
 from ..incidents import IncidentSink, record_incident
 from ..log import kv, setup
+from .coverage import CoverageModel, load_coverage
 from .geo import PortResolver, load_ports
 from .machine import Detector
 from .sinks import EventWriter, SnapshotStore
@@ -74,6 +75,61 @@ class Ports:
         return True
 
 
+# The reception picture is a trailing week; a quarter of an hour of staleness in
+# it is nothing, and the query is a full scan of density_h3's window.
+COVERAGE_RELOAD_S = 900.0
+
+
+class Coverage:
+    """The reception model, reloaded every quarter of an hour.
+
+    Same shape as Ports and a different lifetime: polygons are drawn by a human
+    and change on a restart, coverage is measured and drifts with the traffic.
+    Starting without it is fine — every gap says coverage-unknown, which is what
+    v0 said all along.
+    """
+
+    def __init__(
+        self,
+        detector: Detector,
+        lake: EventWriter,
+        load: Callable[[EventWriter], Awaitable[CoverageModel]] = (
+            lambda lake: load_coverage(lake.fetch)
+        ),
+        every_s: float = COVERAGE_RELOAD_S,
+    ) -> None:
+        self._detector = detector
+        self._lake = lake
+        self._load = load
+        self._every = every_s
+        self._next = 0.0
+        self._warned = False
+
+    async def attempt(self, now: float | None = None) -> bool:
+        """Try, if it is time. True the tick a fresh model lands."""
+        clock = asyncio.get_running_loop().time() if now is None else now
+        if clock < self._next:
+            return False
+        self._next = clock + self._every
+        try:
+            # Bounded like the ports load: the sweep and the flush run behind it.
+            model = await asyncio.wait_for(self._load(self._lake), timeout=30.0)
+        except Exception as exc:
+            if not self._warned:  # one warning, not one per reload
+                self._warned = True
+                logger.warning(kv(
+                    "detector_coverage_unavailable",
+                    reason=type(exc).__name__, detail=str(exc)[:200],
+                    note="every gap stays coverage-unknown until the lake answers",
+                ))
+            return False
+        self._detector.coverage = model
+        self._warned = False
+        logger.info(kv("detector_coverage_loaded", cells=sum(
+            len(v) for v in model.cells.values())))
+        return True
+
+
 async def cycle(detector: Detector, lake: EventWriter, snaps: SnapshotStore) -> None:
     """One tick: find the silence, write what closed, remember where we are."""
     detector.sweep()
@@ -102,12 +158,15 @@ async def cycle_forever(
     interval_s: float,
     incidents: IncidentSink | None = None,
     ports: Ports | None = None,
+    coverage: Coverage | None = None,
 ) -> None:
     while True:
         await asyncio.sleep(interval_s)
         try:
             if ports is not None:
                 await ports.attempt()
+            if coverage is not None:
+                await coverage.attempt()
             await cycle(detector, lake, snaps)
         except Exception as exc:  # a bad tick must not take the service down
             reason, detail = type(exc).__name__, str(exc)[:200]
@@ -165,13 +224,16 @@ async def run(settings: Settings) -> None:
     await rebuild(detector, lake, snaps)
     ports = Ports(detector, settings.postgres_url)
     await ports.attempt()
+    coverage = Coverage(detector, lake)
+    await coverage.attempt()
     logger.info(kv("detector_start", topic=settings.raw_topic,
                    group=settings.detectors_group_id, region=settings.region_slug,
                    stop_dwell_s=settings.stop_dwell_s, go_dwell_s=settings.go_dwell_s,
                    anchor_min_s=settings.anchor_min_s))
 
     ticker = asyncio.create_task(
-        cycle_forever(detector, lake, snaps, settings.snapshot_interval_s, snaps.client, ports)
+        cycle_forever(detector, lake, snaps, settings.snapshot_interval_s, snaps.client, ports,
+                      coverage)
     )
     try:
         await consume(consumer, detector)

@@ -14,6 +14,12 @@ from uuid import UUID, uuid4
 
 from ais_pipeline import limits
 from ais_pipeline.config import Settings
+from ais_pipeline.detectors.coverage import (
+    CLASS_COVERAGE,
+    CLASS_UNKNOWN,
+    CLASS_UNUSUAL,
+    build,
+)
 from ais_pipeline.detectors.geo import ZONE_ANCHORAGE, ZONE_BERTH, PortHit
 from ais_pipeline.detectors.machine import (
     EVENT_COLUMNS,
@@ -313,3 +319,67 @@ def test_the_silence_threshold_is_the_products_own_number() -> None:
     """F27: one limits file. A copy here would drift from the one the map draws."""
     root = json.loads((Path(__file__).resolve().parents[2] / "limits.json").read_text())
     assert limits.SILENT_AFTER_S == root["map_vessel_age_s"]["silent_after"]
+
+
+# --- the gap classifier's half: what the machine does with a coverage model ---
+
+# One busy cell at the fixes the helpers above emit (52.0 N, 4.0 E), one thin
+# one further out. The verdict thresholds are test_coverage.py's business.
+COVERAGE = build([(52.0, 4.0, 240.0, 0.95, 6.4), (52.0, 8.0, 900.0, 0.02, 1.0)])
+NOISY = 244660003
+
+
+def det_covered() -> Detector:
+    return Detector(Settings(_env_file=None), coverage=COVERAGE)
+
+
+def test_a_gap_in_a_busy_cell_with_the_neighbours_still_talking_reads_unusual() -> None:
+    d = det_covered()
+    d.handle_parsed(pos(0, 8.0))                              # she is heard, then not
+    for mmsi in (QUIET, NOISY, QUIET + 100):                  # three neighbours, same cell
+        drive(d, 0, 60 * 25, 60, 8.0, mmsi=mmsi)
+    d.sweep()
+    d.handle_parsed(pos(60 * 25, 8.0))                        # she is back
+
+    meta = d.take_events()[0].meta
+    assert meta["classification"] == CLASS_UNUSUAL
+    assert meta["confidence"] > 0.9
+    assert meta["neighbors_online"] == 3          # the expander's numbers, not the page's
+    assert meta["cell_interval_s"] == 240
+
+
+def test_a_gap_far_out_where_nobody_is_heard_is_the_coverage() -> None:
+    d = det_covered()
+    d.handle_parsed(pos(0, 8.0, lon=8.0))
+    drive(d, 0, 60 * 25, 60, 8.0, mmsi=QUIET, lon=8.0)
+    d.sweep()
+    d.handle_parsed(pos(60 * 25, 8.0, lon=8.0))
+    assert d.take_events()[0].meta["classification"] == CLASS_COVERAGE
+
+
+def test_without_a_model_a_gap_still_says_only_that_we_do_not_know() -> None:
+    d = det()
+    d.handle_parsed(pos(0, 8.0))
+    drive(d, 0, 60 * 25, 60, 8.0, mmsi=QUIET)
+    d.sweep()
+    d.handle_parsed(pos(60 * 25, 8.0))
+    meta = d.take_events()[0].meta
+    assert meta == {"duration_s": 25 * 3600, "classification": CLASS_UNKNOWN}
+
+
+def test_the_verdict_survives_a_restart_with_the_open_gap() -> None:
+    """The inputs are only true at gap open, so the answer is snapshotted, not redone."""
+    d = det_covered()
+    d.handle_parsed(pos(0, 8.0))
+    for mmsi in (QUIET, NOISY, QUIET + 100):
+        drive(d, 0, 60 * 25, 60, 8.0, mmsi=mmsi)
+    d.sweep()
+    verdict = d.ships[MMSI].gap_verdict
+    assert verdict is not None and verdict["classification"] == CLASS_UNUSUAL
+
+    revived = Detector(Settings(_env_file=None))  # a restart with no model loaded yet
+    revived.restore(d.snapshot())
+    assert revived.ships[MMSI].gap_verdict == verdict
+    assert (revived.ships[MMSI].last_lat, revived.ships[MMSI].last_lon) == (52.0, 4.0)
+    revived.handle_parsed(pos(60 * 25, 8.0))
+    assert revived.take_events()[0].meta["classification"] == CLASS_UNUSUAL

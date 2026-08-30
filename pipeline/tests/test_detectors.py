@@ -252,6 +252,31 @@ def test_a_flip_back_costs_the_ship_no_later_events() -> None:
     assert [e.meta["to"] for e in d.take_events()] == [13.2, 6.0]
 
 
+def test_an_oscillating_transmitter_is_silenced_for_the_whole_chain() -> None:
+    """7.0 <-> 7.8 every 15 minutes (mmsi 244179000's habit): one event, not
+    every other leg — suppression keeps the anchor instead of forgetting it."""
+    d = det()
+    for i, value in enumerate([7.0, 7.8, 7.0, 7.8, 7.0, 7.8, 7.0]):
+        d.handle_parsed(static(i * 15, value))
+    assert [e.meta["to"] for e in d.take_events()] == [7.8]
+
+
+def test_the_flip_window_includes_its_own_last_second() -> None:
+    d = det()
+    d.handle_parsed(static(0, 2.0))
+    d.handle_parsed(static(10, 8.0))
+    d.handle_parsed(static(10 + 60, 2.0))   # exactly the window: still a flip
+    assert [e.meta["to"] for e in d.take_events()] == [8.0]
+
+
+def test_a_return_one_decimetre_off_is_still_the_same_retyped_value() -> None:
+    d = det()
+    d.handle_parsed(static(0, 1.2))
+    d.handle_parsed(static(10, 13.2))
+    d.handle_parsed(static(28, 1.3))    # 0.1 off the origin — floats included
+    assert [e.meta["to"] for e in d.take_events()] == [13.2]
+
+
 def test_a_ship_that_keeps_going_deeper_is_never_flipping() -> None:
     d = det()
     d.handle_parsed(static(0, 2.0))

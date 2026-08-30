@@ -117,10 +117,14 @@ class Coverage:
         except Exception as exc:
             if not self._warned:  # one warning, not one per reload
                 self._warned = True
+                note = (
+                    "verdicts keep the last loaded model until the lake answers"
+                    if self._detector.coverage is not None
+                    else "every gap stays coverage-unknown until the lake answers"
+                )
                 logger.warning(kv(
                     "detector_coverage_unavailable",
-                    reason=type(exc).__name__, detail=str(exc)[:200],
-                    note="every gap stays coverage-unknown until the lake answers",
+                    reason=type(exc).__name__, detail=str(exc)[:200], note=note,
                 ))
             return False
         self._detector.coverage = model

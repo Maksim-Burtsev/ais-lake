@@ -64,6 +64,47 @@ def test_a_point_snaps_to_the_nearest_centre_and_only_a_near_one() -> None:
     assert MODEL.cell_of(51.98, 3.99) == DENSE[:2]
 
 
+def test_the_weights_are_the_measured_ones_not_their_mirror() -> None:
+    # Occupancy ramp 0.75, interval ramp 1.0: only the 0.55/0.45 split makes
+    # this 0.86 — the swapped weights would say 0.89. The other fixtures
+    # saturate both ramps and cannot tell the weights apart.
+    lopsided = build([(52.0, 6.0, 250.0, 0.5, 2.0)])
+    verdict = lopsided.classify(52.0, 6.0, neighbours_online=3)
+    assert (verdict.classification, verdict.confidence) == (CLASS_UNUSUAL, 0.86)
+
+
+def test_high_latitude_cells_are_still_found_near_their_edges() -> None:
+    # Above ~53°N a centre can qualify from more than one 0.1° lon bucket away;
+    # a fixed 3x3 search lost the whole Danish coast near cell edges.
+    nordic = build([(56.0, 10.001, 300.0, 0.5, 2.0)])
+    assert nordic.cell_of(56.0, 9.899) == (56.0, 10.001)
+
+
+async def test_the_reception_model_reloads_on_its_own_clock_and_survives_the_lake() -> None:
+    from ais_pipeline.config import Settings
+    from ais_pipeline.detectors.machine import Detector
+    from ais_pipeline.detectors.service import Coverage
+
+    detector = Detector(Settings(_env_file=None))
+    calls = 0
+
+    async def load(_: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("lake down")
+        return MODEL
+
+    cov = Coverage(detector, lake=None, load=load, every_s=900.0)  # type: ignore[arg-type]
+    assert await cov.attempt(now=0.0) is False       # failed, one warning
+    assert await cov.attempt(now=1.0) is False       # before the next slot: no call
+    assert calls == 1 and detector.coverage is None
+    assert await cov.attempt(now=900.0) is True      # the tick the model lands
+    assert detector.coverage is MODEL
+    assert await cov.attempt(now=901.0) is False     # and not again until the slot
+    assert calls == 2
+
+
 def test_the_loader_indexes_whatever_the_lake_hands_back() -> None:
     seen: list[str] = []
 

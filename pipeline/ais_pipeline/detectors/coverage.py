@@ -128,8 +128,13 @@ class CoverageModel:
         # snaps to a centre twice as far east as it looks.
         scale = math.cos(math.radians(lat))
         key = (int(lat // _GRID_DEG), int(lon // _GRID_DEG))
+        # A centre qualifies at up to MAX_CENTRE_DEG / cos(lat) degrees of raw
+        # longitude, which outgrows one grid bucket above ~53°N — the German
+        # Bight and the whole Danish coast. Search as many lon buckets as the
+        # latitude demands, not a fixed one.
+        span = int(MAX_CENTRE_DEG / (max(scale, 0.1) * _GRID_DEG)) + 1
         for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
+            for dx in range(-span, span + 1):
                 for clat, clon, _ in self.cells.get((key[0] + dy, key[1] + dx), ()):
                     d = (clat - lat) ** 2 + ((clon - lon) * scale) ** 2
                     if d < best_d:

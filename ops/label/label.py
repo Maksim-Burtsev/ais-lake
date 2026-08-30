@@ -196,7 +196,7 @@ def replay(mmsi: str, t_start: str) -> Verdict | None:
     # making way carries her silence out of the cell. The machine reads motion;
     # here the last fix's sog stands in for it (3 kn: below every labelled true
     # positive's speed, above every false one's — ops/label/report.md).
-    if verdict.classification == CLASS_UNUSUAL and sog >= 3.0:
+    if verdict.classification == CLASS_UNUSUAL and 3.0 <= sog < 102.3:  # 102.3 = sog n/a
         return Verdict(CLASS_UNKNOWN, 0.0, {**verdict.stats, "demoted": "underway"})
     return verdict
 
@@ -305,5 +305,38 @@ def main() -> None:
         sys.exit(__doc__.split("Run:")[1].strip())
 
 
+def selfcheck() -> None:
+    """The one runnable check on the scoring: six hand-built rows, known answer.
+
+    Run: python3 ops/label/label.py selfcheck
+    """
+    base = {"mmsi": "1", "t_start": "t", "duration_h": "1",
+            "confidence": "1.0", "replayed_classification": "", "replayed_confidence": ""}
+    rows = [
+        {**base, "classification": CLASS_UNUSUAL, "label": "y"},   # tp
+        {**base, "classification": CLASS_UNUSUAL, "label": "n"},   # fp
+        {**base, "classification": CLASS_COVERAGE, "label": "y"},  # fn
+        {**base, "classification": CLASS_COVERAGE, "label": "n"},  # tn
+        {**base, "classification": CLASS_UNKNOWN, "label": "y"},   # abstains
+        {**base, "classification": CLASS_UNKNOWN, "label": "y",    # replay decides
+         "replayed_classification": CLASS_UNUSUAL, "replayed_confidence": "0.9"},
+    ]
+    replayed = 0
+    for r in rows:
+        if r["classification"] == CLASS_UNKNOWN and r.get("replayed_classification"):
+            r["classification"] = r["replayed_classification"]
+            replayed += 1
+    scored = [r for r in rows if r["classification"] != CLASS_UNKNOWN]
+    tp = sum(1 for r in scored if r["classification"] == CLASS_UNUSUAL and r["label"] == "y")
+    fp = sum(1 for r in scored if r["classification"] == CLASS_UNUSUAL and r["label"] == "n")
+    fn = sum(1 for r in scored if r["classification"] == CLASS_COVERAGE and r["label"] == "y")
+    assert (tp, fp, fn, replayed) == (2, 1, 1, 1), (tp, fp, fn, replayed)
+    assert abs(tp / (tp + fp) - 2 / 3) < 1e-9 and abs(tp / (tp + fn) - 2 / 3) < 1e-9
+    print("selfcheck: ok")
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "selfcheck":
+        selfcheck()
+    else:
+        main()

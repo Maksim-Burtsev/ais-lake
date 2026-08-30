@@ -64,8 +64,10 @@ def _nowhere(lat: float, lon: float) -> PortHit | None:
 
 SOG_NA = 102.3  # AIS spells "speed not available" as 102.3 kn
 DRAUGHT_NA = 0.0  # …and "draught not declared" as zero
-# AIS carries draught in decimetres, so equality between two readings is 0.1 m.
-DRAUGHT_FLIP_TOL = 0.1
+# AIS carries draught in decimetres, so two readings one step (0.1 m) apart are
+# the same value retyped. 0.15 rather than 0.1: floats make 1.3 - 1.2 land a
+# hair above 0.1, and the next honest step is 0.2 away regardless.
+DRAUGHT_FLIP_TOL = 0.15
 
 # What we say when no coverage model has answered: we do not know why she went
 # quiet. With a model loaded, coverage.py replaces the word (F13).
@@ -263,6 +265,9 @@ class Detector:
             # replay window turns up again as the replay walks through it.
             ship.last_fix = row.ts
             ship.gap_id = None
+            # The verdict belonged to the seeded gap; a gap the replay finds
+            # later is a different silence at a different place.
+            ship.gap_verdict = None
         elif row.ts <= ship.last_fix:
             return ship  # a late or repeated fix never rewinds a run
         else:
@@ -424,9 +429,12 @@ class Detector:
             and abs(draught - ship.draught_prev) <= DRAUGHT_FLIP_TOL
             and static.ts - ship.draught_event_ts <= self._draught_flip_window
         ):
-            # She went there and came straight back. Forget the pair rather than
-            # judging the next move against a value we no longer believe.
-            ship.draught_prev = ship.draught_event_ts = None
+            # She went there and came straight back. Keep the junk value she
+            # returned from as the anchor: an oscillating transmitter's next
+            # excursion is a flip-back to it, so the whole chain stays silent —
+            # clearing the pair here caught only every other leg (measured on
+            # a 7.0↔7.8 oscillator before the fix).
+            ship.draught_prev, ship.draught_event_ts = was, static.ts
             return
         ship.draught_prev, ship.draught_event_ts = was, static.ts
         self._emit(

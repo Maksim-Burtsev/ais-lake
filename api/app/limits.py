@@ -22,6 +22,12 @@ MAX_VESSEL_AGE_S: int = int(LIMITS["map_vessel_age_s"]["max"])
 # shorter than MAX_VESSEL_AGE_S so a silent ship is still on the water to see —
 # limits.json argues the gap between the two.
 SILENT_AFTER_S: int = int(LIMITS["map_vessel_age_s"]["silent_after"])
+# How far back a story and a track may look, and the line the story prints about
+# it (story.py, track.py). Anon values: there is no auth before M6, so every
+# reader is anonymous and the account column is config waiting for a caller.
+STORY_WINDOW_D: int = int(LIMITS["story_window_d"]["anon"])
+STORY_LIMIT_LINE: str = str(LIMITS["story_window_d"]["line"]).format(days=STORY_WINDOW_D)
+DOWNLOAD_WINDOW_D: int = int(LIMITS["download_window_d"]["anon"])
 # The window "typical wait" is measured over (ports.py).
 PORT_WAIT_WINDOW_D: int = int(LIMITS["port_wait_window_d"]["days"])
 

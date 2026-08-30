@@ -5,6 +5,17 @@
     "default": 10,
     "floor": { "anon": 10, "free": 5 }
   },
+  "story_window_d": {
+    "$comment": "How far back a ship's story and her track may reach (F16). 30 days for a visitor, 90 with an account; the server clamps, so a hand-written ?from= three years back comes back as thirty days and not as an error. `line` is the inline limit line the story prints under the timeline — one template, so the UI can never quote a window the server does not enforce. There is no auth until M6, so today everyone is `anon`.",
+    "anon": 30,
+    "account": 90,
+    "line": "Showing the last {days} days. An account opens 90."
+  },
+  "download_window_d": {
+    "$comment": "The slice a download may cover (F17), shorter than the story's own window on purpose: reading 30 days is cheap, handing 30 days of points over as a file is not. Used by the export endpoint (M4 step 5).",
+    "anon": 7,
+    "account": 90
+  },
   "port_wait_window_d": {
     "$comment": "How far back /v1/ports/{locode} looks for finished anchorages when it says 'typical wait' (F19). A week: long enough that a quiet Sunday does not empty the sample, short enough that the number still describes the queue a ship joins today. Widen it and the figure stops being news.",
     "days": 7

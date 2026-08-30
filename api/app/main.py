@@ -15,7 +15,7 @@ from typing import Any
 import asyncpg
 import clickhouse_connect
 import redis.asyncio as redis
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.responses import HTMLResponse
 
 from .consumer import LatestShips, consume_forever
@@ -27,6 +27,8 @@ from .regions import regions_payload
 from .search import search_payload
 from .ships import CardUnavailable, ShipNotFound, card_for
 from .status import build_status
+from .story import StoryUnavailable, story_payload
+from .track import track_payload
 
 logger = logging.getLogger("api")
 
@@ -185,6 +187,32 @@ async def ship_card(key: str) -> dict[str, Any]:
         raise HTTPException(404, "no such ship") from exc
     except CardUnavailable as exc:
         raise HTTPException(503, "ship card unavailable") from exc
+
+
+@app.get("/v1/ships/{key}/story")
+async def ship_story(key: str, from_: int | None = Query(None, alias="from"),
+                     to: int | None = None) -> dict[str, Any]:
+    """F16: the voyage as ordered prose, plus the link to the track that draws it.
+    The window is clamped server-side — `window_d` and `limit_line` say to what."""
+    try:
+        return await story_payload(runtime.clickhouse, runtime.postgres, key, from_, to)
+    except ShipNotFound as exc:
+        raise HTTPException(404, "no such ship") from exc
+    except StoryUnavailable as exc:
+        raise HTTPException(503, "story unavailable") from exc
+
+
+@app.get("/v1/ships/{key}/track")
+async def ship_track(key: str, from_: int | None = Query(None, alias="from"),
+                     to: int | None = None, simplify: float | None = None) -> dict[str, Any]:
+    """F14: the replay's line — a GeoJSON LineString with a timestamp per point
+    and the silences listed separately, so the line can be dashed through them."""
+    try:
+        return await track_payload(runtime.clickhouse, key, from_, to, simplify)
+    except ShipNotFound as exc:
+        raise HTTPException(404, "no such ship") from exc
+    except StoryUnavailable as exc:
+        raise HTTPException(503, "track unavailable") from exc
 
 
 @app.websocket("/v1/live")

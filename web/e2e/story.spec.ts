@@ -113,7 +113,7 @@ test('the SPA takes the page over and renders the server prose', async ({ page }
   await expect(page.getByText(STORY.limit_line)).toBeVisible();
   await expect(page.getByRole('link', { name: /BACK TO THE MAP/ })).toHaveAttribute('href', '/');
   // the takeover reads the embedded payload, so no second /v1 story read goes out
-  await expect(page.locator('polyline')).toBeVisible();
+  await expect(page.locator('polyline').first()).toBeVisible();
 });
 
 test.describe('with javascript off', () => {

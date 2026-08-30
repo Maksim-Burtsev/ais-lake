@@ -29,6 +29,8 @@ export interface UrlState {
   selection?: number;
   /** F13 — the opened silence: a gap event_id. Absent = the timeline. */
   gap?: string;
+  /** F14 — the replay playhead, epoch seconds. Absent = the track's end, paused. */
+  t?: number;
 }
 
 /** Launch region. The frames say "Black Sea" — illustrative; launch is the
@@ -96,6 +98,13 @@ export const PARAMS: Params = {
     // the page stays on the timeline rather than hunting for a gap that is not there.
     parse: (raw) => (/^[\w-]{1,64}$/.test(raw) ? raw : undefined),
     serialize: (value) => value ?? null,
+  },
+  t: {
+    param: 't',
+    // Whole epoch seconds. Out-of-range is not our problem here: the replay
+    // clamps to the track it actually has.
+    parse: (raw) => (/^\d{1,11}$/.test(raw) ? Number(raw) : undefined),
+    serialize: (value) => (value === undefined ? null : String(Math.round(value))),
   },
   filter: {
     param: 'f',

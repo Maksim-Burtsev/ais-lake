@@ -65,7 +65,7 @@ const FAILURE_COPY: Record<'missing' | 'unreadable', string> = {
 };
 
 /** The frame's compact "AIS 8s AGO". It is a live map, so this keeps counting. */
-const age = (ms: number): string => {
+export const age = (ms: number): string => {
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.round(s / 60)}m`;

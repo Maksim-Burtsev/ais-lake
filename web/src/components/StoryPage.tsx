@@ -17,8 +17,9 @@
  *  ☆ (F24) and "Watch her live" are drawn per frame and inert until M6.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { GapView, type GapNumbers } from './GapView';
+import { Replay } from './Replay';
 import { useUrlStore } from '../state/url';
 
 const DASH = '—';
@@ -38,6 +39,8 @@ interface Card {
   mmsi: number;
   identity: Identity;
   sentence: string | null;
+  /** The last fix we hold. Null for a ship who has said nothing in the window. */
+  latest?: { ts: number } | null;
 }
 interface Event {
   event_id: string;
@@ -129,59 +132,6 @@ function Particulars({ mmsi, id }: { mmsi: number; id: Identity | undefined }) {
   );
 }
 
-/** The voyage box: the track's own shape, scaled to fit, north up. */
-function Voyage({ mmsi }: { mmsi: number }) {
-  const [line, setLine] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    fetch(`/v1/ships/${mmsi}/track`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`track ${r.status}`))))
-      .then((body: { geometry: { coordinates: [number, number][] } }) => {
-        const pts = body.geometry.coordinates;
-        if (!alive || pts.length < 2) return;
-        const xs = pts.map((p) => p[0]);
-        const ys = pts.map((p) => p[1]);
-        const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-        const k = Math.min(880 / (x1 - x0 || 1), 420 / (y1 - y0 || 1)) * 0.86;
-        setLine(
-          pts
-            .map(([x, y]) => `${(440 + (x - (x0 + x1) / 2) * k).toFixed(1)},${(210 - (y - (y0 + y1) / 2) * k).toFixed(1)}`)
-            .join(' '),
-        );
-      })
-      .catch((error: unknown) => console.warn('track:', error));
-    return () => {
-      alive = false;
-    };
-  }, [mmsi]);
-
-  return (
-    <div className="mt-[26px] h-[420px] border border-[var(--chrome-hairline)] max-[900px]:h-[210px]">
-      <svg viewBox="0 0 880 420" preserveAspectRatio="xMidYMid meet" className="h-full w-full">
-        {line ? (
-          <polyline
-            points={line}
-            fill="none"
-            stroke="var(--chrome-search-anchored)"
-            strokeWidth={2}
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : (
-          <text
-            x="440"
-            y="210"
-            textAnchor="middle"
-            className="font-mono text-[11px] tracking-[0.16em]"
-            fill="var(--chrome-card-age)"
-          >
-            VOYAGE MAP
-          </text>
-        )}
-      </svg>
-    </div>
-  );
-}
-
 export function StoryPage() {
   const seeded = embedded();
   const [card, setCard] = useState<Card | null>(seeded?.card ?? null);
@@ -221,6 +171,11 @@ export function StoryPage() {
   const gapId = useUrlStore((s) => s.gap);
   const patch = useUrlStore((s) => s.patch);
   const opened = story?.events.find((e) => e.kind === 'gap' && e.event_id === gapId);
+
+  // F14 — the replay drives the timeline: what has already happened stays lit,
+  // what has not yet been reached dims (frame 6c). Null = not replaying.
+  const [playhead, setPlayhead] = useState<number | null>(null);
+  const onTime = useCallback((value: number | null) => setPlayhead(value), []);
 
   return (
     <div className="min-h-screen bg-[var(--page)] text-[var(--chrome-card-sentence)]">
@@ -265,11 +220,31 @@ export function StoryPage() {
             {card?.sentence ??
               `No movements recorded for her in the last ${story?.window_d ?? DASH} days.`}
           </p>
-          {mmsi ? <Voyage mmsi={mmsi} /> : null}
+          {mmsi ? (
+            <Replay
+              mmsi={mmsi}
+              latestTs={card?.latest?.ts ?? null}
+              onTime={onTime}
+              segments={(story?.events ?? []).map((e) => ({
+                kind: e.kind,
+                t_start: e.t_start,
+                t_end: e.t_end,
+                color: DOT[e.kind] ?? 'var(--chrome-card-age)',
+              }))}
+            />
+          ) : null}
 
           <div className="mt-[36px] flex flex-col border-l border-[var(--chrome-hairline)]">
             {(story?.events ?? []).map((event) => (
-              <article key={event.event_id} className="flex gap-[20px] pb-[28px]">
+              <article
+                key={event.event_id}
+                data-testid="timeline-entry"
+                data-reached={playhead === null || event.t_start <= playhead ? 'yes' : 'no'}
+                className="flex gap-[20px] pb-[28px] transition-opacity"
+                style={
+                  playhead !== null && event.t_start > playhead ? { opacity: 0.4 } : undefined
+                }
+              >
                 <span
                   className="mt-[5px] -ml-[6px] h-[11px] w-[11px] flex-none rounded-full border-2 border-[var(--page)]"
                   style={{ background: DOT[event.kind] ?? 'var(--chrome-card-age)' }}

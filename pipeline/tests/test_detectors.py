@@ -335,7 +335,7 @@ def det_covered() -> Detector:
 
 def test_a_gap_in_a_busy_cell_with_the_neighbours_still_talking_reads_unusual() -> None:
     d = det_covered()
-    d.handle_parsed(pos(0, 8.0))                              # she is heard, then not
+    drive(d, 0, 25, 5, 0.1)                                   # she stops, then is not heard
     for mmsi in (QUIET, NOISY, QUIET + 100):                  # three neighbours, same cell
         drive(d, 0, 60 * 25, 60, 8.0, mmsi=mmsi)
     d.sweep()
@@ -346,6 +346,21 @@ def test_a_gap_in_a_busy_cell_with_the_neighbours_still_talking_reads_unusual() 
     assert meta["confidence"] > 0.9
     assert meta["neighbors_online"] == 3          # the expander's numbers, not the page's
     assert meta["cell_interval_s"] == 240
+
+
+def test_a_ship_under_way_cannot_be_called_unusual() -> None:
+    """Measured on the 20 labelled voyages: every false "unusual" was a ship
+    crossing out of a well-heard cell under way. Her cell cannot vouch for the
+    water she was leaving, so the verdict abstains."""
+    d = det_covered()
+    d.handle_parsed(pos(0, 8.0))  # last heard making way
+    for mmsi in (QUIET, NOISY, QUIET + 100):
+        drive(d, 0, 60 * 25, 60, 8.0, mmsi=mmsi)
+    d.sweep()
+    verdict = d.ships[MMSI].gap_verdict
+    assert verdict is not None
+    assert verdict["classification"] == "coverage-unknown"
+    assert verdict["demoted"] == "underway"
 
 
 def test_a_gap_far_out_where_nobody_is_heard_is_the_coverage() -> None:
@@ -370,7 +385,7 @@ def test_without_a_model_a_gap_still_says_only_that_we_do_not_know() -> None:
 def test_the_verdict_survives_a_restart_with_the_open_gap() -> None:
     """The inputs are only true at gap open, so the answer is snapshotted, not redone."""
     d = det_covered()
-    d.handle_parsed(pos(0, 8.0))
+    drive(d, 0, 25, 5, 0.1)  # stopped first: a moving ship's verdict is demoted
     for mmsi in (QUIET, NOISY, QUIET + 100):
         drive(d, 0, 60 * 25, 60, 8.0, mmsi=mmsi)
     d.sweep()

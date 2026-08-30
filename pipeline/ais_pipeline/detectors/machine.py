@@ -39,7 +39,7 @@ from ..limits import SILENT_AFTER_S
 from ..refinery.models import Parsed, PositionRow, StaticRow
 from ..refinery.parser import MSG_TYPE_POSITION, NotAVesselMessage, parse
 from ..refinery.state import UNDERWAY_MIN_SOG_KN as SOG_STILL
-from .coverage import CLASS_UNKNOWN, CoverageModel
+from .coverage import CLASS_UNKNOWN, CLASS_UNUSUAL, CoverageModel
 from .geo import ZONE_BERTH, PortHit
 
 # events, in table column order (db/migrations/…_create_lake_tables.sql)
@@ -440,6 +440,14 @@ class Detector:
         cell = self.coverage.cell_of(ship.last_lat, ship.last_lon)
         neighbours = online.get(cell, 0) if cell is not None else 0
         verdict = self.coverage.classify(ship.last_lat, ship.last_lon, neighbours)
+        if verdict.classification == CLASS_UNUSUAL and ship.motion == MOTION_UNDERWAY:
+            # A ship under way carries her silence somewhere else: the cell she
+            # vanished from cannot vouch for water she was leaving. Measured on
+            # the 20 hand-labelled voyages (ops/label/report.md): every false
+            # "unusual" was a moving ship crossing out of a well-heard cell into
+            # unmeasured inland water; every true one had stopped first.
+            return {"classification": CLASS_UNKNOWN, "confidence": 0.0,
+                    **verdict.stats, "demoted": "underway"}
         return {"classification": verdict.classification,
                 "confidence": verdict.confidence, **verdict.stats}
 

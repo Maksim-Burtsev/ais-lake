@@ -8,7 +8,7 @@ For each case: was the silence **hers** (y — she went quiet where we could hea
 ## 1. 3cd0d8d7-a0fb-43b3-855d-b630613a4c86
 
 Silent 2026-08-28 21:53:57 → 2026-08-30 08:29:57 (34.6 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-unknown** (replayed) (confidence 0.0; cell occupancy 0.833, interval 321 s, 4 neighbours online at the start)
 
 **PRIVILEGE** · cargo · mmsi 244050206
 
@@ -34,7 +34,7 @@ After:
 ## 2. 0adff2c0-16dc-49f3-add5-c35b8721ef5a
 
 Silent 2026-08-28 22:12:53 → 2026-08-29 22:23:33 (24.2 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-unknown** (replayed) (confidence 0.0; cell occupancy 0.833, interval 225 s, 4 neighbours online at the start)
 
 **THEMHOF** · unknown · mmsi 211895760
 
@@ -60,7 +60,7 @@ After:
 ## 3. 175c72ec-deb4-4acc-8771-756de7133c05
 
 Silent 2026-08-27 20:49:31 → 2026-08-30 00:08:06 (51.3 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-unknown** (replayed) (confidence 0.0; cell occupancy 0.572, interval 450 s, 1 neighbours online at the start)
 
 **QUATTRO** · tanker · mmsi 244105935
 
@@ -86,7 +86,7 @@ After:
 ## 4. 36565f11-b3c0-47c6-8913-19a6d78da5e9
 
 Silent 2026-08-27 15:55:24 → 2026-08-29 14:23:43 (46.5 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-likely** (replayed) (confidence 1.0; cell occupancy 0.087, interval 900 s, 1 neighbours online at the start)
 
 **GRAMPIAN DEFENDER** · unknown · mmsi 235526000
 
@@ -112,7 +112,7 @@ After:
 ## 5. 7313e95b-cfd9-4bb1-8692-1151ebd20473
 
 Silent 2026-08-27 13:30:47 → 2026-08-29 18:14:21 (52.7 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-unknown** (replayed) (confidence 0.0; cell occupancy 0.167, interval 300 s, 5 neighbours online at the start)
 
 **(no static report)** · unknown · mmsi 211664810
 
@@ -136,7 +136,7 @@ After:
 ## 6. 8b01be3c-666e-43fc-bfa8-f1770e904839
 
 Silent 2026-08-28 21:17:11 → 2026-08-30 13:33:59 (40.3 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **unusual** (replayed) (confidence 0.84; cell occupancy 0.837, interval 409 s, 28 neighbours online at the start)
 
 **BOLERO** · tanker · mmsi 244000542
 
@@ -153,12 +153,13 @@ Before:
 
 After:
   2026-08-30 13:33:59  51.1629, 3.7769  5.4 kn
+  2026-08-30 13:46:28  51.1761, 3.7989  7.0 kn
 
 
 ## 7. fa107e0b-685e-4e4a-acc9-ec73c3649dc8
 
 Silent 2026-08-27 14:06:12 → 2026-08-29 14:12:12 (48.1 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-unknown** (replayed) (confidence 0.0; cell occupancy 0.504, interval 360 s, 1 neighbours online at the start)
 
 **DANISH WARSHIP P524** · tug · mmsi 220435000
 
@@ -184,7 +185,7 @@ After:
 ## 8. ccce641e-fd49-4d7f-8744-0cb5a7cb3650
 
 Silent 2026-08-23 23:59:10 → 2026-08-30 09:54:09 (153.9 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-unknown** (replayed) (confidence 0.0; cell occupancy 0.152, interval 133 s, 3 neighbours online at the start)
 
 **MARI** · unknown · mmsi 219019354
 
@@ -210,7 +211,7 @@ After:
 ## 9. 52dfbf0a-4dc0-4102-976d-0a2df60e469e
 
 Silent 2026-08-23 23:50:55 → 2026-08-30 05:43:18 (149.9 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-likely** (replayed) (confidence 1.0; cell occupancy 0.159, interval 900 s, 0 neighbours online at the start)
 
 **IDA RAMBOW** · cargo · mmsi 218098000
 
@@ -236,7 +237,7 @@ After:
 ## 10. da490173-92fa-490c-9812-d57caf217b35
 
 Silent 2026-08-27 20:47:28 → 2026-08-30 01:08:48 (52.4 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **unusual** (replayed) (confidence 0.98; cell occupancy 0.845, interval 310 s, 114 neighbours online at the start)
 
 **CHEMICAL FIGHTER** · tanker · mmsi 249962000
 
@@ -262,7 +263,7 @@ After:
 ## 11. ef70dfef-8681-46df-ac85-835f0b43031d
 
 Silent 2026-08-27 14:08:10 → 2026-08-29 20:34:30 (54.4 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-likely** (replayed) (confidence 1.0; cell occupancy 0.011, interval 900 s, 0 neighbours online at the start)
 
 **REM INSULA** · unknown · mmsi 212897000
 
@@ -288,7 +289,7 @@ After:
 ## 12. 515f264b-439e-4fd9-828d-df9599fb3419
 
 Silent 2026-08-27 09:06:43 → 2026-08-30 12:24:34 (75.3 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-unknown** (replayed) (confidence 0.0; cell occupancy 0.833, interval 220 s, 8 neighbours online at the start)
 
 **NERIS** · unknown · mmsi 211474300
 
@@ -311,7 +312,7 @@ After:
 ## 13. 4c5fb692-4aa1-4e00-8d20-83f1cbac8698
 
 Silent 2026-08-23 23:59:43 → 2026-08-29 16:55:12 (136.9 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-unknown** (replayed) (confidence 0.0; cell occupancy 0.098, interval 349 s, 4 neighbours online at the start)
 
 **VERTOM MARJOLIJN** · cargo · mmsi 255916066
 
@@ -337,7 +338,7 @@ After:
 ## 14. 26837f91-8c73-46f7-8207-2d64f10374b9
 
 Silent 2026-08-28 13:03:27 → 2026-08-29 16:53:29 (27.8 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-unknown** (replayed) (confidence 0.0; cell occupancy 0.723, interval 300 s, 4 neighbours online at the start)
 
 **JACOBUS SR** · cargo · mmsi 244670457
 
@@ -363,7 +364,7 @@ After:
 ## 15. 300e4260-8869-40a9-ae00-0d93e665a431
 
 Silent 2026-08-22 00:51:13 → 2026-08-29 14:45:06 (181.9 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-likely** (replayed) (confidence 0.76; cell occupancy 0.125, interval 28 s, 1 neighbours online at the start)
 
 **VILNIA MAERSK** · cargo · mmsi 219136000
 
@@ -389,7 +390,7 @@ After:
 ## 16. 20b1b0d9-76dc-4c63-bd97-d34c098a5386
 
 Silent 2026-08-28 21:51:01 → 2026-08-29 23:02:09 (25.2 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-likely** (replayed) (confidence 0.93; cell occupancy 0.117, interval 450 s, 0 neighbours online at the start)
 
 **WESER HIGHWAY** · cargo · mmsi 355390000
 
@@ -414,7 +415,7 @@ After:
 ## 17. b704eaf4-cfef-4a8c-a6e0-d3d7b5f0b6eb
 
 Silent 2026-08-27 07:26:30 → 2026-08-29 22:11:20 (62.7 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-likely** (replayed) (confidence 0.86; cell occupancy 0.004, interval 300 s, 0 neighbours online at the start)
 
 **PACIFIC GARNET** · tanker · mmsi 538009203
 
@@ -436,7 +437,7 @@ After:
 ## 18. 6cc1ff94-4d3c-4297-966a-1e7a37d0aab6
 
 Silent 2026-08-27 09:07:26 → 2026-08-29 14:23:18 (53.3 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **unusual** (replayed) (confidence 1.0; cell occupancy 0.841, interval 181 s, 117 neighbours online at the start)
 
 **MOORING TUG I** · unknown · mmsi 211527950
 
@@ -462,7 +463,7 @@ After:
 ## 19. 4640078b-31bd-4d22-a305-a8e32f32241f
 
 Silent 2026-08-28 20:10:42 → 2026-08-29 21:34:12 (25.4 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-likely** (replayed) (confidence 0.93; cell occupancy 0.11, interval 450 s, 0 neighbours online at the start)
 
 **XIN YONG CHANG 19** · cargo · mmsi 630001285
 
@@ -488,7 +489,7 @@ After:
 ## 20. 866c9801-f68b-4cc7-92d5-f9e05231782d
 
 Silent 2026-08-27 08:12:50 → 2026-08-30 12:34:55 (76.4 h)
-Detector says: **coverage-unknown** (confidence —; cell occupancy —, interval — s, — neighbours online at the start)
+Detector says: **coverage-likely** (replayed) (confidence 1.0; cell occupancy 0.004, interval 900 s, 0 neighbours online at the start)
 
 **(no static report)** · unknown · mmsi 235000170
 

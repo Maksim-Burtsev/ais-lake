@@ -51,6 +51,11 @@ from ais_pipeline.detectors.coverage import (  # noqa: E402
     CLASS_COVERAGE,
     CLASS_UNKNOWN,
     CLASS_UNUSUAL,
+    COVERAGE_QUERY,
+    MAX_CENTRE_DEG,
+    CoverageModel,
+    Verdict,
+    build,
 )
 from ais_pipeline.refinery.symbology import class_of  # noqa: E402
 
@@ -151,6 +156,51 @@ def context(mmsi: str, t_start: str, t_end: str) -> str:
     return "\n".join(lines)
 
 
+@cache
+def coverage_model() -> CoverageModel:
+    """The same model the live classifier builds, from the same query. Built once."""
+    return build(query(COVERAGE_QUERY + " FORMAT TSV"))
+
+
+def replay(mmsi: str, t_start: str) -> Verdict | None:
+    """What the classifier WOULD have said about this gap, computed now.
+
+    Every gap older than the classifier's deploy carries `coverage-unknown`,
+    because the verdict is stamped when a gap opens. Waiting a week for live
+    verdicts to accumulate is a week not spent calibrating, and the classifier
+    is pure — the same inputs are still in the lake, so we can just ask it.
+    """
+    last = query(f"""SELECT lat, lon, sog FROM positions WHERE mmsi = {mmsi}
+                     AND ts <= '{t_start}' ORDER BY ts DESC LIMIT 1 FORMAT TSV""")
+    if not last:
+        return None
+    model = coverage_model()
+    lat, lon, sog = float(last[0][0]), float(last[0][1]), float(last[0][2])
+    centre = model.cell_of(lat, lon)
+    if centre is None:
+        return model.classify(lat, lon, 0)  # no cell: an abstention either way
+    # Neighbours = other ships heard in the SAME cell in the half hour before she
+    # went quiet. The box is a superset of the cell (a point is never further than
+    # MAX_CENTRE_DEG from its centre); cell_of does the real filtering.
+    # ponytail: one arbitrary fix per ship decides her cell. A ship crossing the
+    # boundary in those 30 min is a coin flip — fine at 3 neighbours saturation.
+    span = MAX_CENTRE_DEG / max(0.1, cos(radians(lat)))
+    rows = query(f"""SELECT mmsi, any(lat), any(lon) FROM positions
+        WHERE ts BETWEEN '{t_start}' - INTERVAL {NEIGHBOUR_WINDOW_MIN} MINUTE AND '{t_start}'
+          AND lat BETWEEN {lat - MAX_CENTRE_DEG} AND {lat + MAX_CENTRE_DEG}
+          AND lon BETWEEN {lon - span} AND {lon + span}
+          AND mmsi != {mmsi} GROUP BY mmsi FORMAT TSV""")
+    online = sum(1 for _, la, lo in rows if model.cell_of(float(la), float(lo)) == centre)
+    verdict = model.classify(lat, lon, online)
+    # Mirror of the machine's underway demotion (machine.py::_verdict): a ship
+    # making way carries her silence out of the cell. The machine reads motion;
+    # here the last fix's sog stands in for it (3 kn: below every labelled true
+    # positive's speed, above every false one's — ops/label/report.md).
+    if verdict.classification == CLASS_UNUSUAL and sog >= 3.0:
+        return Verdict(CLASS_UNKNOWN, 0.0, {**verdict.stats, "demoted": "underway"})
+    return verdict
+
+
 def sample(days: int, seed: str) -> None:
     rows, decided = cases(days, seed)
     if not rows:
@@ -167,14 +217,22 @@ def sample(days: int, seed: str) -> None:
     with (HERE / "labels.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["event_id", "mmsi", "t_start", "duration_h", "classification",
-                    "confidence", "label"])
+                    "confidence", "replayed_classification", "replayed_confidence", "label"])
         for i, (eid, mmsi, t0, t1, cls, conf, occ, interval, online, dur) in enumerate(rows, 1):
-            w.writerow([eid, mmsi, t0, f"{int(dur) / 3600:.1f}", cls, conf, ""])
+            v = replay(mmsi, t0) if cls == CLASS_UNKNOWN else None
+            w.writerow([eid, mmsi, t0, f"{int(dur) / 3600:.1f}", cls, conf,
+                        v.classification if v else "", f"{v.confidence}" if v else "", ""])
+            said = (f"**{v.classification}** (replayed) (confidence {v.confidence}; "
+                    f"cell occupancy {v.stats.get('cell_occupancy', '—')}, interval "
+                    f"{v.stats.get('cell_interval_s', '—')} s, "
+                    f"{v.stats['neighbors_online']} neighbours online at the start)"
+                    if v else
+                    f"**{cls}** (confidence {conf or '—'}; cell occupancy {occ or '—'}, "
+                    f"interval {interval or '—'} s, {online or '—'} neighbours online "
+                    "at the start)")
             body += [f"\n## {i}. {eid}\n",
                      f"Silent {t0} → {t1} ({int(dur) / 3600:.1f} h)",
-                     (f"Detector says: **{cls}** (confidence {conf or '—'}; "
-                      f"cell occupancy {occ or '—'}, interval {interval or '—'} s, "
-                      f"{online or '—'} neighbours online at the start)\n"),
+                     f"Detector says: {said}\n",
                      context(mmsi, t0, t1), ""]
     (HERE / "cases.md").write_text("\n".join(head + body) + "\n")
     print(f"Wrote {len(rows)} cases to ops/label/cases.md "
@@ -183,6 +241,12 @@ def sample(days: int, seed: str) -> None:
 
 def report() -> None:
     rows = list(csv.DictReader((HERE / "labels.csv").open()))
+    replayed = 0
+    for r in rows:  # a replayed verdict stands in wherever the stored one abstained
+        if r["classification"] == CLASS_UNKNOWN and r.get("replayed_classification"):
+            r["classification"] = r["replayed_classification"]
+            r["confidence"] = r["replayed_confidence"]
+            replayed += 1
     labelled = [r for r in rows if r["label"].strip().lower() in ("y", "n")]
     if not labelled:
         sys.exit("No labels in ops/label/labels.csv yet — fill the `label` column with y/n.")
@@ -203,6 +267,8 @@ def report() -> None:
            (f"Labelled {len(labelled)} of {len(rows)} sampled. "
             f"{len(abstained)} ({len(abstained) / len(labelled):.0%}) were "
             f"`{CLASS_UNKNOWN}` — the classifier declined, so they score neither way.\n"),
+           (f"{replayed} of {len(rows)} verdicts were replayed offline (the gap predates "
+            "the classifier); they are scored like any other.\n" if replayed else ""),
            f"**Precision {prec:.2f}** · **Recall {rec:.2f}** on the {len(scored)} it ruled on.\n",
            "| | labelled y (hers) | labelled n (ours) |",
            "|---|---|---|",

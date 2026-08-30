@@ -32,10 +32,12 @@ numbers are F19 (M5) and do not exist yet, so nothing here invents one.
 """
 
 import logging
+import time
 from datetime import UTC
 from typing import Any, Protocol
 
 from .flags import flag_for
+from .limits import SILENT_AFTER_S
 from .map import RedisClient, row_for
 
 logger = logging.getLogger("ships")
@@ -43,6 +45,25 @@ logger = logging.getLogger("ships")
 MMSI_DIGITS = 9
 IMO_DIGITS = 7
 HEADING_NA = 511  # AIS "not available"
+HOUR_S = 3600
+DAY_S = 86_400
+DAYS_AFTER_S = 48 * HOUR_S  # under two days we still count in hours
+
+
+def humanize_duration(seconds: float) -> str:
+    """"40 minutes", "1 hour", "14 hours", "2 days" — a rounded, plural-correct span.
+
+    TWIN of pipeline/ais_pipeline/sentences.py::humanize_duration, which says the
+    same of this one: the api cannot import the pipeline. Change one, change both.
+    """
+    seconds = max(0.0, seconds)
+    if seconds < HOUR_S:
+        n, unit = round(seconds / 60), "minute"
+    elif seconds < DAYS_AFTER_S:
+        n, unit = round(seconds / HOUR_S), "hour"
+    else:
+        n, unit = round(seconds / DAY_S), "day"
+    return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
 
 # SYMBOLOGY.md §1. The class KEY is the refinery's; only the display name is ours.
 CLASS_NAMES = {
@@ -180,6 +201,18 @@ async def card_for(
     hot = await row_for(redis_client, mmsi)
     sym = str(hot[6]) if hot else None
 
+    # Same reasoning as map.py::_rows, and the same clock: silence is the absence
+    # of a message, so only read time can tell it. Without this the card would
+    # still be saying "Under way at 9.8 kn" about a hull the map has been ringing
+    # coral for a day — one ship, two answers.
+    sentence = _text(latest[8]) if latest else None
+    state = str(latest[7]) if latest else None
+    if latest is not None:
+        silent_for = time.time() - _epoch(latest[0])
+        if silent_for > SILENT_AFTER_S:
+            state = "silent"
+            sentence = f"Went silent — {humanize_duration(silent_for)} ago"
+
     return {
         "mmsi": mmsi,
         "identity": {
@@ -194,7 +227,7 @@ async def card_for(
             "destination": _text(destination),
             "eta": _text(eta),
         },
-        "sentence": _text(latest[8]) if latest else None,
+        "sentence": sentence,
         "latest": None
         if latest is None
         else {
@@ -205,6 +238,6 @@ async def card_for(
             "cog": round(float(latest[4]), 1),
             "heading": None if latest[5] == HEADING_NA else int(latest[5]),
             "nav_status": int(latest[6]),
-            "state": str(latest[7]),
+            "state": state,
         },
     }

@@ -2,7 +2,7 @@
 
 import json
 import time
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -12,7 +12,10 @@ from tests.test_map import FakeRedis, field
 
 MMSI = 249118000  # MID 249 = Malta
 IMO = 9327545
-FIX = datetime(2026, 8, 28, 6, 0, 0)
+# Relative to now, because silence is judged against the wall clock at read time
+# (card_for, mirroring map.py): a fixed calendar date would age into "silent" and
+# quietly rewrite every sentence assertion below.
+FIX = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=8)
 
 # vessel_latest: ts, lat, lon, sog, cog, heading, nav_status, state, sentence.
 # The sentence is a fixture string on purpose — refinery/state.py::sentence_for
@@ -91,6 +94,33 @@ async def test_the_sentence_is_the_stored_one_verbatim() -> None:
     card = await card_for(FULL, HotHash(HOT), str(MMSI))
     assert card["sentence"] == STORED_SENTENCE
     assert "9.8 kn" not in str(card["sentence"])
+
+
+def _aged(seconds: int) -> tuple[Any, ...]:
+    """The same ship, last heard `seconds` ago."""
+    return (datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=seconds), *LATEST[1:])
+
+
+async def test_a_ship_past_the_silence_cut_says_so_instead_of_her_last_sentence() -> None:
+    """The map rings her coral at silent_after; the card said "Waited at anchor"
+    about the same hull. One ship, one answer."""
+    from app.limits import SILENT_AFTER_S
+
+    assert 26 * 3600 > SILENT_AFTER_S  # 24 h in limits.json; the wording below follows it
+    ch = FakeClickHouse(_aged(26 * 3600), STATIC)
+    card = await card_for(ch, HotHash(HOT), str(MMSI))
+    assert card["latest"]["state"] == "silent"
+    assert card["sentence"] == "Went silent — 26 hours ago"
+    assert card["identity"]["name"] == "Gas Khios"  # identity does not decay
+
+
+async def test_just_inside_the_cut_is_still_her_own_sentence() -> None:
+    from app.limits import SILENT_AFTER_S
+
+    ch = FakeClickHouse(_aged(SILENT_AFTER_S - 60), STATIC)
+    card = await card_for(ch, HotHash(HOT), str(MMSI))
+    assert card["latest"]["state"] == "underway"
+    assert card["sentence"] == STORED_SENTENCE
 
 
 async def test_an_imo_resolves_to_the_mmsi_and_takes_the_same_path() -> None:

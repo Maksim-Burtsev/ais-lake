@@ -125,6 +125,22 @@ test('time → position: interpolates between fixes and holds through a gap', ()
   expect(positionAt([], [], [], T0)).toBeNull();
 });
 
+/** An unclosed gap (t_end null) — she went silent and has not come back. */
+test('time → position: an open gap holds at the last real fix, forever', () => {
+  const open = [{ t_start: T0 + 15_000, t_end: null }];
+  // before the silence: still interpolated
+  expect(positionAt(COORDS, TIMES, open, T0 + 5_000)?.[0]).toBeCloseTo(4.1, 6);
+  // from t_start onward she stays put — no interpolation through the silence
+  expect(positionAt(COORDS, TIMES, open, T0 + 16_000)).toEqual(COORDS[2]);
+  expect(positionAt(COORDS, TIMES, open, T0 + 32_000)).toEqual(COORDS[2]);
+
+  // What gapLines draws for it: start → the last point we have, never back to
+  // the voyage's first fix.
+  const a = positionAt(COORDS, TIMES, open, open[0]!.t_start);
+  expect(a).toEqual(COORDS[2]);
+  expect(COORDS[COORDS.length - 1]).toEqual(COORDS[5]);
+});
+
 const hullX = async (page: import('@playwright/test').Page): Promise<number> =>
   Number(await page.getByTestId('replay-hull').getAttribute('cx'));
 

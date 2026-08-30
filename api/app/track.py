@@ -33,7 +33,11 @@ RAW_QUERY = """
 SELECT ts, lat, lon FROM positions
 WHERE mmsi = %(mmsi)s AND ts >= toDateTime(%(from)s) AND ts < toDateTime(%(to)s)
 ORDER BY ts
+LIMIT 500000
 """
+# The LIMIT is a memory backstop, not a feature: 30 days of a chatty ship is
+# ~250k rows, and nothing should be able to pull an unbounded set into this
+# process before Douglas-Peucker ever sees it.
 # ReplacingMergeTree without FINAL: argMax over ts picks the newest row per
 # bucket whether or not the parts have merged yet (vessel_latest's reasoning).
 FIVE_M_QUERY = """
@@ -112,7 +116,12 @@ async def track_payload(
     while len(kept) > MAX_POINTS and epsilon < MAX_SIMPLIFY:
         epsilon = min(epsilon * 4 or DEFAULT_SIMPLIFY, MAX_SIMPLIFY)
         kept = douglas_peucker(points, epsilon)
-    del kept[MAX_POINTS:]  # a straight enough track that even MAX_SIMPLIFY kept too much
+    if len(kept) > MAX_POINTS:
+        # Even MAX_SIMPLIFY kept too much: thin by a uniform stride rather than
+        # truncating, which would amputate the tail of the voyage. First and last
+        # indices always survive — the line must still end where she ended.
+        stride = -(-len(kept) // MAX_POINTS)
+        kept = kept[::stride] + ([kept[-1]] if (len(kept) - 1) % stride else [])
 
     gap_rows = (await _query(ch, GAPS_QUERY, params)).result_rows
     return {

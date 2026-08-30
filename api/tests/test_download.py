@@ -34,11 +34,31 @@ async def test_filename_is_name_imo_from_to() -> None:
     _, _, name = await get("csv")
     # F17 verbatim: {name}-{imo}-{from}-{to}. Dates YYYYMMDD UTC (our choice).
     stem, _, ext = name.rpartition(".")
-    head, _, dates = stem.partition("gas-khios-9327545-")
-    assert head == "" and ext == "csv"
-    assert len(dates) == 17 and dates[8] == "-"  # YYYYMMDD-YYYYMMDD
+    assert ext == "csv"
+    # The window with no bounds is "the download window ending now", clamped in
+    # story.clamp_window — so both dates are known exactly, not just in shape.
+    now = int(time.time())
+    day = lambda ts: time.strftime("%Y%m%d", time.gmtime(ts))  # noqa: E731
+    expected = f"gas-khios-9327545-{day(now - DOWNLOAD_WINDOW_D * DAY_S)}-{day(now)}"
+    assert stem == expected
     _, _, geo = await get("geojson")
     assert geo == f"{stem}.geojson"
+
+
+@pytest.mark.asyncio
+async def test_route_404s_on_a_format_it_does_not_serve() -> None:
+    from fastapi import HTTPException
+
+    from app.main import runtime, ship_track_file
+
+    original = runtime.clickhouse
+    try:
+        runtime.clickhouse = FakeLake(LATEST, STATIC)  # type: ignore[assignment]
+        with pytest.raises(HTTPException) as err:
+            await ship_track_file(str(MMSI), "xml")
+        assert err.value.status_code == 404
+    finally:
+        runtime.clickhouse = original
 
 
 @pytest.mark.asyncio

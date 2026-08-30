@@ -170,6 +170,13 @@ def test_clamp_window_defaults_to_the_whole_window_ending_now() -> None:
     )
 
 
+def test_clamp_window_pulls_a_future_to_back_to_now() -> None:
+    assert clamp_window(None, 9_999_999_999, NOW) == (
+        int(NOW) - STORY_WINDOW_D * DAY_S,
+        int(NOW),
+    )
+
+
 @pytest.mark.asyncio
 async def test_unknown_key_404s_and_a_dead_lake_503s() -> None:
     with pytest.raises(ShipNotFound):

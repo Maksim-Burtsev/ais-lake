@@ -67,7 +67,9 @@ def clamp_window(
         except (TypeError, ValueError):
             return fallback
 
-    to_ts = epoch(to, int(now))
+    # `to` never runs past now: a far-future bound would otherwise reach the wire
+    # and the download's filename as a date nobody has lived through.
+    to_ts = min(epoch(to, int(now)), int(now))
     from_ts = epoch(from_, to_ts - window_d * DAY_S)
     floor = int(now) - window_d * DAY_S
     from_ts = max(from_ts, floor)

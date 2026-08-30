@@ -91,7 +91,11 @@ const stamp = (start: number, end: number | null): string => {
     .toUpperCase()
     .replace(' ', ' ');
   const head = `${day} · ${at(start)}`;
-  return end && end > start ? `${head} – ${at(end)}` : head;
+  if (!end || end <= start) return head;
+  // Past midnight the end carries its own day, or "23:50 – 00:10" reads as ten
+  // minutes rather than twenty hours.
+  const endDay = new Date(end * 1000).toUTCString().slice(5, 11).toUpperCase();
+  return `${head} – ${endDay === day ? '' : `${endDay} `}${at(end)}`;
 };
 
 const grouped = (mmsi: number) => String(mmsi).replace(/(\d{3})(?=\d)/g, '$1 ');
@@ -141,8 +145,12 @@ function RailFoot({ mmsi }: { mmsi: number }) {
   };
 
   const share = () => {
+    // ?theme is this visit's preference, not part of the moment being shared —
+    // the recipient keeps their own.
+    const url = new URL(location.href);
+    url.searchParams.delete('theme');
     navigator.clipboard
-      .writeText(location.href)
+      .writeText(url.toString())
       .then(() => setToast('Link copied — it opens right here, at this moment.'))
       .catch(() => setToast('Could not copy the link — the address bar has it.'));
   };

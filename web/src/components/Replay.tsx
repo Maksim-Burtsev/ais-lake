@@ -33,6 +33,7 @@ interface Track {
   gaps: Gap[];
 }
 
+
 /** Longitude/latitude → the 880×420 box, north up, scaled to fit. */
 const project = (coords: readonly Point[]) => {
   const xs = coords.map((p) => p[0]);
@@ -159,7 +160,13 @@ export function Replay({
     return track.gaps
       .map((g) => {
         const a = positionAt(track.coords, track.times, track.gaps, g.t_start);
-        const b = positionAt(track.coords, track.times, track.gaps, g.t_end);
+        // An open gap has no far end yet: dash it to the last point we have, so
+        // the silence runs to the edge of what we know instead of back to the
+        // voyage's first fix (which is what a null timestamp used to draw).
+        const b =
+          g.t_end === null
+            ? (track.coords[track.coords.length - 1] ?? null)
+            : positionAt(track.coords, track.times, track.gaps, g.t_end);
         return a && b ? { g, a: to(a), b: to(b) } : null;
       })
       .filter((v): v is NonNullable<typeof v> => v !== null);
@@ -167,20 +174,25 @@ export function Replay({
 
   const frac = t !== null && t1 > t0 ? (t - t0) / (t1 - t0) : 1;
 
-  const scrub = (clientX: number) => {
+  // force=false on a drag: one replaceState per pointermove trips Safari's
+  // 100-calls-per-30-s limit. The final position is published on pointerup.
+  const scrub = (clientX: number, force = false) => {
     const box = bar.current?.getBoundingClientRect();
     if (!box || !t1) return;
     const f = Math.min(1, Math.max(0, (clientX - box.left) / box.width));
     const value = t0 + f * (t1 - t0);
     setPlaying(false);
     setT(value);
-    publish(value, true);
+    publish(value, force);
   };
 
   const dragging = useRef(false);
   useEffect(() => {
     const move = (e: PointerEvent) => dragging.current && scrub(e.clientX);
-    const up = () => (dragging.current = false);
+    const up = (e: PointerEvent) => {
+      if (dragging.current) scrub(e.clientX, true);
+      dragging.current = false;
+    };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     return () => {

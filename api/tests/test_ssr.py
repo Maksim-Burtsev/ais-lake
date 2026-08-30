@@ -87,7 +87,10 @@ async def test_page_is_readable_html_before_any_script() -> None:
     body = bytes((await page(f"gas-khios-{MMSI}")).body).decode()
     assert "<title>Gas Khios — where she has been | ais·lake</title>" in body
     assert f'<link rel="canonical" href="/ship/gas-khios-{MMSI}">' in body
-    assert 'property="og:image" content="/ship/gas-khios-249118000/og.png"' in body
+    og = re.search(r'property="og:image" content="(.*?)"', body).group(1)  # type: ignore[union-attr]
+    # Preview crawlers drop a relative one, so it must be absolute.
+    assert og.startswith("http") and og.endswith("/ship/gas-khios-249118000/og.png")
+    assert f'property="og:url" content="{og[: -len("/og.png")]}"' in body
     # the prose is story.py's, rendered into the markup rather than fetched
     assert "Moored in RUNVS" in body or "Moored" in body
     assert "Went silent" in body
@@ -155,3 +158,11 @@ def test_render_is_pure_enough_to_call_twice() -> None:
     }
     story = {"events": [], "window_d": 30}
     assert render(card, story) == render(card, story)
+
+
+def test_stamp_names_the_second_day_when_the_span_crosses_midnight() -> None:
+    from app.ssr import _stamp
+
+    start = int(datetime(2025, 8, 14, 23, 50, tzinfo=UTC).timestamp())
+    assert _stamp(start, start + 1200) == "14 AUG · 23:50 – 15 AUG 00:10"
+    assert _stamp(start, start + 300) == "14 AUG · 23:50 – 23:55"

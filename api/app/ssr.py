@@ -41,6 +41,10 @@ from .track import track_payload
 # whether this process is serving a build or sitting behind `vite dev`.
 DIST = Path(os.environ["WEB_DIST"]) if os.environ.get("WEB_DIST") else None
 DASH = "—"
+# Preview crawlers ignore a relative og:image, so the tags carry an absolute URL.
+# From an env var and not request.base_url: behind a proxy base_url lies about
+# the scheme and host the reader actually shared.
+ORIGIN = os.environ.get("PUBLIC_ORIGIN", "http://localhost:8000").rstrip("/")
 MMSI_TAIL = re.compile(r"-(\d{9})$")
 
 env = jinja2.Environment(
@@ -99,7 +103,11 @@ def _stamp(start: int, end: int | None) -> str:
     text = first.strftime("%d %b · %H:%M").upper()
     if end is None or end <= start:
         return text
-    return f"{text} – {datetime.fromtimestamp(end, UTC).strftime('%H:%M')}"
+    last = datetime.fromtimestamp(end, UTC)
+    # Past midnight the end carries its own day, or "23:50 – 00:10" reads as ten
+    # minutes rather than twenty hours.
+    day = "" if last.date() == first.date() else last.strftime("%d %b ").upper()
+    return f"{text} – {day}{last.strftime('%H:%M')}"
 
 
 def _grouped(mmsi: int) -> str:
@@ -152,6 +160,7 @@ def render(card: dict[str, Any], story: dict[str, Any]) -> str:
             f"{len(events)} movements in the last {story['window_d']} days."
         ),
         canonical=canonical(identity.get("name"), mmsi),
+        origin=ORIGIN,
         limit_line=STORY_LIMIT_LINE,
         particulars=particulars(mmsi, identity),
         entries=[

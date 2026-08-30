@@ -71,6 +71,25 @@ async def test_simplify_param_beats_the_default() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_track_over_the_cap_is_thinned_but_keeps_its_last_point() -> None:
+    # A zig-zag: every point is a corner, so Douglas-Peucker cannot drop any of
+    # them and the cap has to thin the line itself.
+    from app.track import MAX_POINTS
+
+    n = MAX_POINTS + 137
+    rows = [
+        (T0 + timedelta(seconds=i), 51.0 + (i % 2) * 0.5, 4.0 + i * 0.01) for i in range(n)
+    ]
+    payload = await track_payload(
+        FakeClickHouse(rows, []), str(MMSI), now=NOW, simplify=0.0
+    )
+    coords = payload["geometry"]["coordinates"]
+    assert len(coords) <= MAX_POINTS
+    assert coords[0] == [4.0, 51.0]
+    assert coords[-1] == [round(4.0 + (n - 1) * 0.01, 5), 51.0 + ((n - 1) % 2) * 0.5]
+
+
+@pytest.mark.asyncio
 async def test_gaps_come_back_as_spans() -> None:
     payload = await track()
     gap = payload["gaps"][0]

@@ -118,6 +118,9 @@ class ShipState:
     # UN/LOCODE and which of its polygons held her. Both '' in open water.
     port: str = ""
     zone: str = ""
+    # The port's display name, carried so the sentence can say "Moored in
+    # Rotterdam" — a locode on a public page would break the voice rule.
+    port_name: str = ""
     # last_fix came out of the lake rather than off the bus — a floor for the
     # gap sweep, and nothing the replay has to respect.
     seeded: bool = False
@@ -139,6 +142,7 @@ class ShipState:
                 "gap_id": self.gap_id,
                 "port": self.port,
                 "zone": self.zone,
+                "port_name": self.port_name,
                 "seeded": self.seeded,
             },
             separators=(",", ":"),
@@ -162,6 +166,7 @@ class ShipState:
             # .get: snapshots written before the ports landed have neither.
             port=str(d.get("port", "")),
             zone=str(d.get("zone", "")),
+            port_name=str(d.get("port_name", "")),
             seeded=bool(d.get("seeded", False)),
         )
 
@@ -268,7 +273,7 @@ class Detector:
             # event, because a swinging ship must not change her own verdict.
             hit = self.resolve(lat, lon)
             if hit is not None:
-                ship.port, ship.zone = hit.locode, hit.zone
+                ship.port, ship.zone, ship.port_name = hit.locode, hit.zone, hit.name
                 if hit.zone == ZONE_BERTH:
                     ship.motion = MOTION_MOORED
             # The uuid identifies the stop, whatever we end up calling it.
@@ -306,7 +311,7 @@ class Detector:
         ship.motion = MOTION_UNDERWAY
         ship.anchorage_id = None
         ship.still_since = None
-        ship.port = ship.zone = ""
+        ship.port = ship.zone = ship.port_name = ""
 
     def _resume(self, ship: ShipState, ts: datetime) -> None:
         """A message after silence. Long enough silence is a gap, and it just closed."""

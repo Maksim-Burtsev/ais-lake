@@ -40,8 +40,11 @@ DDL_KINDS = {"port_call", "anchorage", "gap", "load_delta", "departure"}
 # Three points instead of polygons: the ray casting is geo.py's own test, and
 # what the machine has to get right is which answer it believes.
 BERTH_LON, ANCHORAGE_LON = 4.1, 4.2
-LOCODE = "NLRTM"
-_MAP = {BERTH_LON: PortHit(LOCODE, ZONE_BERTH), ANCHORAGE_LON: PortHit(LOCODE, ZONE_ANCHORAGE)}
+LOCODE, PORT_NAME = "NLRTM", "Rotterdam"
+_MAP = {
+    BERTH_LON: PortHit(LOCODE, ZONE_BERTH, PORT_NAME),
+    ANCHORAGE_LON: PortHit(LOCODE, ZONE_ANCHORAGE, PORT_NAME),
+}
 
 
 def charted(lat: float, lon: float) -> PortHit | None:
@@ -173,9 +176,11 @@ def test_a_stop_in_open_water_is_unchanged_by_the_polygons() -> None:
 
 def test_where_she_stopped_survives_a_snapshot_and_an_older_one_still_loads() -> None:
     ship = ShipState(mmsi=MMSI, last_fix=T0, motion="moored", still_since=T0,
-                     anchorage_id=str(uuid4()), port=LOCODE, zone=ZONE_BERTH)
+                     anchorage_id=str(uuid4()), port=LOCODE, zone=ZONE_BERTH,
+                     port_name=PORT_NAME)
     back = ShipState.from_json(ship.to_json())
     assert (back.port, back.zone, back.motion) == (LOCODE, ZONE_BERTH, "moored")
+    assert back.port_name == PORT_NAME  # the sentence needs the name, not the locode
 
     # written before the ports landed: no port, no zone, and it must still load
     old = json.loads(ship.to_json())

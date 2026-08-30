@@ -25,20 +25,22 @@ HOLED = multi(square(0, 0, 10, 10) + square(4, 4, 6, 6))
 
 
 def test_a_point_inside_the_berth_square_is_that_port_alongside() -> None:
-    r = PortResolver([("NLRTM", multi(square(0, 0, 10, 10)), None)])
+    r = PortResolver([("NLRTM", "Rotterdam", multi(square(0, 0, 10, 10)), None)])
     hit = r.resolve(lat=5.0, lon=5.0)
     assert hit is not None
-    assert hit == ("NLRTM", "berth")
+    assert hit == ("NLRTM", "berth", "Rotterdam")
 
 
 def test_a_point_in_the_hole_of_a_ring_is_outside_the_port() -> None:
-    r = PortResolver([("NLRTM", HOLED, None)])
+    r = PortResolver([("NLRTM", "Rotterdam", HOLED, None)])
     assert r.resolve(lat=5.0, lon=5.0) is None
     assert r.resolve(lat=1.0, lon=1.0) is not None  # still inside the doughnut
 
 
 def test_the_second_part_of_a_multipolygon_counts_as_much_as_the_first() -> None:
-    r = PortResolver([("DEHAM", multi(square(0, 0, 1, 1), square(20, 20, 21, 21)), None)])
+    r = PortResolver(
+        [("DEHAM", "Hamburg", multi(square(0, 0, 1, 1), square(20, 20, 21, 21)), None)]
+    )
     hit = r.resolve(lat=20.5, lon=20.5)
     assert hit is not None and hit.locode == "DEHAM"
 
@@ -46,25 +48,32 @@ def test_the_second_part_of_a_multipolygon_counts_as_much_as_the_first() -> None
 def test_latitude_and_longitude_are_not_interchangeable() -> None:
     # Every other polygon here is symmetric across lat=lon, so a swapped axis
     # order inside the resolver would pass the whole file. This one is not.
-    r = PortResolver([("BEANR", multi(square(0, 0, 10, 2)), None)])  # lon 0..10, lat 0..2
-    assert r.resolve(lat=1.0, lon=8.0) == ("BEANR", "berth")
+    # lon 0..10, lat 0..2
+    r = PortResolver([("BEANR", "Antwerp", multi(square(0, 0, 10, 2)), None)])
+    assert r.resolve(lat=1.0, lon=8.0) == ("BEANR", "berth", "Antwerp")
     assert r.resolve(lat=8.0, lon=1.0) is None
 
 
 def test_open_water_belongs_to_nobody() -> None:
-    r = PortResolver([("NLRTM", multi(square(0, 0, 10, 10)), multi(square(10, 10, 20, 20)))])
+    r = PortResolver(
+        [("NLRTM", "Rotterdam", multi(square(0, 0, 10, 10)), multi(square(10, 10, 20, 20)))]
+    )
     assert r.resolve(lat=50.0, lon=50.0) is None
 
 
 def test_a_berth_wins_over_an_anchorage_drawn_across_it() -> None:
     # Rotterdam's anchorage polygon overlaps the port; alongside beats waiting.
-    r = PortResolver([("NLRTM", multi(square(0, 0, 10, 10)), multi(square(0, 0, 30, 30)))])
-    assert r.resolve(lat=5.0, lon=5.0) == ("NLRTM", "berth")
+    r = PortResolver(
+        [("NLRTM", "Rotterdam", multi(square(0, 0, 10, 10)), multi(square(0, 0, 30, 30)))]
+    )
+    assert r.resolve(lat=5.0, lon=5.0) == ("NLRTM", "berth", "Rotterdam")
 
 
 def test_a_ship_only_in_the_anchorage_is_waiting_off_that_port() -> None:
-    r = PortResolver([("NLRTM", multi(square(0, 0, 10, 10)), multi(square(0, 0, 30, 30)))])
-    assert r.resolve(lat=25.0, lon=25.0) == ("NLRTM", "anchorage")
+    r = PortResolver(
+        [("NLRTM", "Rotterdam", multi(square(0, 0, 10, 10)), multi(square(0, 0, 30, 30)))]
+    )
+    assert r.resolve(lat=25.0, lon=25.0) == ("NLRTM", "anchorage", "Rotterdam")
 
 
 class FlakyLoader:
@@ -82,7 +91,7 @@ class FlakyLoader:
 
 
 async def test_the_ports_land_on_the_tick_after_postgres_answers() -> None:
-    resolver = PortResolver([("NLRTM", multi(square(0, 0, 10, 10)), None)])
+    resolver = PortResolver([("NLRTM", "Rotterdam", multi(square(0, 0, 10, 10)), None)])
     detector = Detector(Settings())
     blind = detector.resolve
     loader = FlakyLoader(resolver)
@@ -94,7 +103,7 @@ async def test_the_ports_land_on_the_tick_after_postgres_answers() -> None:
 
     assert await ports.attempt() is True
     assert detector.resolve.__self__ is resolver  # type: ignore[attr-defined]
-    assert detector.resolve(5.0, 5.0) == ("NLRTM", "berth")
+    assert detector.resolve(5.0, 5.0) == ("NLRTM", "berth", "Rotterdam")
 
     # Loaded once and never again — the tick keeps calling, Postgres does not.
     assert await ports.attempt() is False

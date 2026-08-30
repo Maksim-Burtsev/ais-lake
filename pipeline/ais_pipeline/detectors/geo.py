@@ -26,6 +26,7 @@ ZONE_ANCHORAGE = "anchorage"
 class PortHit(NamedTuple):
     locode: str
     zone: str  # ZONE_BERTH | ZONE_ANCHORAGE
+    name: str  # the port's display name — "Rotterdam", not "NLRTM"
 
 
 # A polygon plus its bounding box: (min_lon, min_lat, max_lon, max_lat, rings).
@@ -70,19 +71,19 @@ def _hits(lon: float, lat: float, polys: list[_Poly]) -> bool:
 class PortResolver:
     """Twelve ports' berth and anchorage polygons, answered without a database."""
 
-    def __init__(self, rows: list[tuple[str, str, str | None]]) -> None:
-        self._berths = [(locode, _polygons(geom)) for locode, geom, _ in rows]
-        self._anchorages = [(locode, _polygons(anch)) for locode, _, anch in rows]
+    def __init__(self, rows: list[tuple[str, str, str, str | None]]) -> None:
+        self._berths = [(locode, name, _polygons(geom)) for locode, name, geom, _ in rows]
+        self._anchorages = [(locode, name, _polygons(anch)) for locode, name, _, anch in rows]
 
     def resolve(self, lat: float, lon: float) -> PortHit | None:
         # ponytail: linear scan over ~15 bboxes. An r-tree is never needed at
         # dozens of lookups an hour; add one if the port list reaches hundreds.
-        for locode, polys in self._berths:
+        for locode, name, polys in self._berths:
             if _hits(lon, lat, polys):
-                return PortHit(locode, ZONE_BERTH)
-        for locode, polys in self._anchorages:
+                return PortHit(locode, ZONE_BERTH, name)
+        for locode, name, polys in self._anchorages:
             if _hits(lon, lat, polys):
-                return PortHit(locode, ZONE_ANCHORAGE)
+                return PortHit(locode, ZONE_ANCHORAGE, name)
         return None
 
 
@@ -95,9 +96,9 @@ async def load_ports(postgres_url: str) -> PortResolver:
     conn = await asyncpg.connect(postgres_url)
     try:
         rows = await conn.fetch(
-            "SELECT locode, ST_AsGeoJSON(geom) AS geom, "
+            "SELECT locode, name, ST_AsGeoJSON(geom) AS geom, "
             "ST_AsGeoJSON(anchorages) AS anchorages FROM ports"
         )
     finally:
         await conn.close()
-    return PortResolver([(r["locode"], r["geom"], r["anchorages"]) for r in rows])
+    return PortResolver([(r["locode"], r["name"], r["geom"], r["anchorages"]) for r in rows])

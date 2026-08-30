@@ -61,6 +61,7 @@ def ship(mmsi: int, port: str, zone: str, gap_id: str | None = None) -> str:
             "gap_id": gap_id,
             "port": port,
             "zone": zone,
+            "port_name": "Rotterdam" if port else "",
             "seeded": False,
         },
         separators=(",", ":"),

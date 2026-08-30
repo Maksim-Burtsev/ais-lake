@@ -248,3 +248,15 @@ def test_the_mid_table_covers_the_whole_itu_range_not_just_europe() -> None:
         assert flag_for(mmsi) == expected
     assert flag_for(2442000) is None  # not nine digits: a coast station, not a ship
     assert json.loads(json.dumps(MIDS)) == MIDS
+
+
+def test_the_humanize_twin_matches_its_pipeline_sibling_on_every_branch() -> None:
+    # TWIN of pipeline/ais_pipeline/sentences.py humanize_duration — the same
+    # boundary cases test_sentences.py pins over there, pinned here by value.
+    from app.ships import humanize_duration
+
+    assert humanize_duration(40 * 60) == "40 minutes"
+    assert humanize_duration(60 * 60) == "1 hour"
+    assert humanize_duration(26 * 3600) == "26 hours"
+    assert humanize_duration(48 * 3600) == "2 days"
+    assert humanize_duration(3 * 86400) == "3 days"

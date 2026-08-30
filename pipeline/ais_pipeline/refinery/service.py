@@ -192,7 +192,18 @@ class Refinery:
             return
         # ponytail: one json.loads per ship per tick (~10k in the launch region).
         # Cheap enough; if it ever shows up in a profile, diff the hash instead.
-        self._snapshot = {int(mmsi): json.loads(state) for mmsi, state in raw.items()}
+        # Field by field: one corrupt entry must cost one ship her restate, not
+        # the whole tick's batch — the buffers are already drained by then.
+        snapshot: dict[int, dict[str, Any]] = {}
+        bad = 0
+        for mmsi, state in raw.items():
+            try:
+                snapshot[int(mmsi)] = json.loads(state)
+            except (ValueError, TypeError):
+                bad += 1
+        if bad:
+            logger.warning(kv("detector_snapshot_fields_skipped", count=bad))
+        self._snapshot = snapshot
         self._snapshot_at = self._clock()
         if not self._snapshot_ok:
             self._snapshot_ok = True
@@ -216,6 +227,13 @@ class Refinery:
         ship = self._snapshot.get(row.mmsi) if self._fresh() else None
         if ship is None:
             return row
+        # The read timestamp only proves Redis answered; the ship's own last_fix
+        # proves the detector is still working her. A dead or lagging detector
+        # leaves last_fix behind row.ts, and after the same grace the verdict
+        # falls back to nav_status instead of freezing "Moored — N hours" forever.
+        last_fix = ship.get("last_fix")
+        if last_fix is None or row.ts.timestamp() - float(last_fix) > SNAPSHOT_MAX_AGE_S:
+            return row
         motion = str(ship.get("motion", ""))
         state = MOTION_TO_STATE.get(motion)
         if state is None:  # a motion this build does not know — v0 is still true
@@ -238,8 +256,9 @@ class Refinery:
         positions, statics, latest = self.take_batches()
         if not positions and not statics and not latest:
             return
-        await self.load_snapshot()
-        latest = [self._restate(row) for row in latest]
+        if latest:  # a statics-only tick has nothing to restate
+            await self.load_snapshot()
+            latest = [self._restate(row) for row in latest]
         await lake.insert_positions(positions)
         await lake.insert_static(statics)
         await lake.insert_latest(latest)

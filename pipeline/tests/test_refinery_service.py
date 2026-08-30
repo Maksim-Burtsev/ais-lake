@@ -202,8 +202,9 @@ class FakeSnapshot:
 
 
 def ship_state(motion: str, still_since: datetime | None = None, port_name: str = "",
-               zone: str = "") -> dict[str, object]:
+               zone: str = "", last_fix: datetime = T0) -> dict[str, object]:
     return {"motion": motion, "port_name": port_name, "zone": zone,
+            "last_fix": int(last_fix.timestamp()),
             "still_since": None if still_since is None else int(still_since.timestamp())}
 
 
@@ -236,6 +237,43 @@ async def test_detector_snapshot_writes_state_and_sentence(
     refinery.handle_parsed(Parsed(position=row(nav_status=5)))
     latest = await flush_one(refinery)
     assert (latest.state, latest.sentence) == (state_wire, sentence)
+
+
+async def test_one_corrupt_snapshot_field_costs_one_ship_not_the_batch() -> None:
+    # The buffers are drained before the restate: a crash here loses the tick.
+    snapshot = FakeSnapshot({244660000: ship_state("moored", T0 - timedelta(hours=3))})
+    refinery = Refinery(Settings(_env_file=None), clock=lambda: 0.0, snapshot=snapshot)
+    good = snapshot.load
+
+    async def poisoned() -> dict[str, str]:
+        fields = await good()
+        fields["999"] = "{not json"
+        return fields
+
+    snapshot.load = poisoned  # type: ignore[method-assign]
+    refinery.handle_parsed(Parsed(position=row(nav_status=5)))
+    latest = await flush_one(refinery)  # would raise before the fix
+    assert latest.sentence == "Moored — 3 hours"
+
+
+async def test_a_ship_the_detector_stopped_working_falls_back() -> None:
+    # last_fix frozen far behind row.ts: a dead detector must not freeze
+    # "Moored — N hours" on a ship that has long since cast off.
+    stale = ship_state("moored", T0 - timedelta(hours=3), "Rotterdam", "berth",
+                       last_fix=T0 - timedelta(hours=2))
+    refinery = Refinery(Settings(_env_file=None), clock=lambda: 0.0,
+                        snapshot=FakeSnapshot({244660000: stale}))
+    refinery.handle_parsed(Parsed(position=row(nav_status=0)))
+    latest = await flush_one(refinery)
+    assert (latest.state, latest.sentence) == ("underway", "Under way at 8.0 kn")
+
+
+async def test_a_motion_this_build_does_not_know_keeps_the_v0_row() -> None:
+    refinery = Refinery(Settings(_env_file=None), clock=lambda: 0.0,
+                        snapshot=FakeSnapshot({244660000: ship_state("docked")}))
+    refinery.handle_parsed(Parsed(position=row(nav_status=1, sog=0.1)))
+    latest = await flush_one(refinery)
+    assert (latest.state, latest.sentence) == ("anchored", "At anchor")
 
 
 async def test_ship_absent_from_snapshot_keeps_the_v0_heuristic() -> None:
@@ -276,7 +314,10 @@ async def test_stale_snapshot_falls_back_and_logs_once(
         latest = await flush_one(refinery)
         assert (latest.state, latest.sentence) == ("underway", "Under way at 8.0 kn")
 
-        snapshot.fail = False  # and back again, once
+        snapshot.fail = False  # and back again, once — with the ship worked anew
+        snapshot.ships[244660000] = ship_state("moored", T0 - timedelta(hours=3),
+                                               "Rotterdam", "berth",
+                                               last_fix=T0 + timedelta(minutes=3))
         refinery.handle_parsed(Parsed(position=row(nav_status=0, ts=T0 + timedelta(minutes=3))))
         assert (await flush_one(refinery)).state == "moored"
 

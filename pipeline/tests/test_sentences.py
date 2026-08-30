@@ -47,6 +47,20 @@ def test_an_anchorage_with_a_port_names_the_port() -> None:
     )
 
 
+def test_a_named_port_outside_its_anchorage_is_still_just_at_anchor() -> None:
+    # "Waiting off" is the anchorage's phrase; a stop elsewhere never borrows it.
+    assert (
+        sentence_for(
+            "anchored",
+            now_ts=NOW,
+            still_since=ago(14 * HOUR),
+            port_name="Rotterdam",
+            in_anchorage=False,
+        )
+        == "At anchor — 14 hours"
+    )
+
+
 def test_an_anchorage_without_a_name_falls_back_to_at_anchor() -> None:
     assert (
         sentence_for("anchored", now_ts=NOW, still_since=ago(HOUR), in_anchorage=True)

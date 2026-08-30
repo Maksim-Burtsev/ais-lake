@@ -106,6 +106,7 @@ class Refinery:
         self._snapshot_source = snapshot
         self._snapshot: dict[int, Any] = {}
         self._snapshot_at: float | None = None
+        self._snapshot_watermark: float | None = None
         self._snapshot_ok = True
         self._validator = Validator(
             bbox=LAUNCH_BBOX,
@@ -204,6 +205,13 @@ class Refinery:
         if bad:
             logger.warning(kv("detector_snapshot_fields_skipped", count=bad))
         self._snapshot = snapshot
+        # The newest last_fix across the fleet is the detector's watermark: a
+        # live detector keeps it within seconds of the stream head, a dead one
+        # leaves it behind while row.ts sails on.
+        self._snapshot_watermark = max(
+            (float(s["last_fix"]) for s in snapshot.values() if s.get("last_fix")),
+            default=None,
+        )
         self._snapshot_at = self._clock()
         if not self._snapshot_ok:
             self._snapshot_ok = True
@@ -227,12 +235,16 @@ class Refinery:
         ship = self._snapshot.get(row.mmsi) if self._fresh() else None
         if ship is None:
             return row
-        # The read timestamp only proves Redis answered; the ship's own last_fix
-        # proves the detector is still working her. A dead or lagging detector
-        # leaves last_fix behind row.ts, and after the same grace the verdict
-        # falls back to nav_status instead of freezing "Moored — N hours" forever.
-        last_fix = ship.get("last_fix")
-        if last_fix is None or row.ts.timestamp() - float(last_fix) > SNAPSHOT_MAX_AGE_S:
+        # The read timestamp only proves Redis answered; the watermark proves
+        # the detector is still working the stream. A dead or lagging detector
+        # leaves it behind row.ts, and after the same grace every verdict falls
+        # back to nav_status instead of freezing "Moored — N hours" forever.
+        # (Per-ship last_fix cannot serve here: an anchored ship reports every
+        # few minutes, and her own gap would out-age any sane bound.)
+        if (
+            self._snapshot_watermark is None
+            or row.ts.timestamp() - self._snapshot_watermark > SNAPSHOT_MAX_AGE_S
+        ):
             return row
         motion = str(ship.get("motion", ""))
         state = MOTION_TO_STATE.get(motion)

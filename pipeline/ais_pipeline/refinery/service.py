@@ -7,18 +7,21 @@ injected, so all of the logic is testable without a network.
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from aiokafka import AIOKafkaConsumer
 
 from ..config import LAUNCH_BBOX, Settings
+from ..detectors.sinks import SnapshotStore
 from ..incidents import IncidentSink, record_incident
 from ..log import kv, setup
+from ..sentences import sentence_for
 from .clickhouse import ClickHouseWriter
 from .dedup import Dedup
 from .models import LatestRow, Parsed, PositionRow, StaticRow
@@ -29,6 +32,27 @@ from .symbology import UNKNOWN_SYM, sym
 from .validate import Validator
 
 logger = logging.getLogger("refinery")
+
+# How long a detector snapshot stays usable after the last successful load.
+# Not a product limit — an internal tolerance for a Redis blip, so a two-second
+# hiccup does not flip every ship back to the nav_status heuristic and then back.
+SNAPSHOT_MAX_AGE_S = 120.0
+
+# vessel_latest.state has three values; the detector's motion has four. "stopped"
+# is a ship pausing mid-passage — still a moving ship as far as the map's colour
+# is concerned, so she stays underway on the wire while the sentence says
+# "Stopped". State and sentence disagree in wording only, never in meaning.
+MOTION_TO_STATE = {
+    "underway": "underway",
+    "stopped": "underway",
+    "anchored": "anchored",
+    "moored": "moored",
+}
+ZONE_ANCHORAGE = "anchorage"  # detectors.geo's value; not imported, see sentences.py
+
+
+class SnapshotSource(Protocol):
+    async def load(self) -> dict[str, str]: ...
 
 
 class LakeSink(Protocol):
@@ -71,8 +95,18 @@ class Counters:
 class Refinery:
     """Raw bytes in, buffered rows out. No I/O — flush() hands the buffers to the sinks."""
 
-    def __init__(self, settings: Settings, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        clock: Callable[[], float] = time.monotonic,
+        snapshot: SnapshotSource | None = None,
+    ) -> None:
         self._settings = settings
+        self._clock = clock
+        self._snapshot_source = snapshot
+        self._snapshot: dict[int, Any] = {}
+        self._snapshot_at: float | None = None
+        self._snapshot_ok = True
         self._validator = Validator(
             bbox=LAUNCH_BBOX,
             mmsi_min=settings.mmsi_min,
@@ -143,10 +177,69 @@ class Refinery:
         self.positions, self.statics, self._dirty = [], [], {}
         return positions, statics, list(dirty.values())
 
+    async def load_snapshot(self) -> None:
+        """Pull the detector's view of every ship, once per flush tick.
+
+        Redis being down is not an outage: the last good snapshot carries us for
+        SNAPSHOT_MAX_AGE_S, then every ship falls back to the nav_status heuristic.
+        """
+        if self._snapshot_source is None:
+            return
+        try:
+            raw = await self._snapshot_source.load()
+        except Exception as exc:
+            self._snapshot_missing(f"{type(exc).__name__}: {exc}"[:200])
+            return
+        # ponytail: one json.loads per ship per tick (~10k in the launch region).
+        # Cheap enough; if it ever shows up in a profile, diff the hash instead.
+        self._snapshot = {int(mmsi): json.loads(state) for mmsi, state in raw.items()}
+        self._snapshot_at = self._clock()
+        if not self._snapshot_ok:
+            self._snapshot_ok = True
+            logger.info(kv("detector_snapshot_back", ships=len(self._snapshot)))
+
+    def _snapshot_missing(self, detail: str) -> None:
+        if self._snapshot_ok:  # once per outage, not once per tick
+            self._snapshot_ok = False
+            logger.warning(kv("detector_snapshot_lost", detail=detail))
+
+    def _fresh(self) -> bool:
+        if self._snapshot_at is None:
+            return False
+        if self._clock() - self._snapshot_at <= SNAPSHOT_MAX_AGE_S:
+            return True
+        self._snapshot_missing("stale")
+        return False
+
+    def _restate(self, row: LatestRow) -> LatestRow:
+        """State + sentence from the detector, or the row's nav_status fallback."""
+        ship = self._snapshot.get(row.mmsi) if self._fresh() else None
+        if ship is None:
+            return row
+        motion = str(ship.get("motion", ""))
+        state = MOTION_TO_STATE.get(motion)
+        if state is None:  # a motion this build does not know — v0 is still true
+            return row
+        still_since = ship.get("still_since")
+        return replace(
+            row,
+            state=state,
+            sentence=sentence_for(
+                motion,
+                sog=row.sog,
+                now_ts=row.ts.timestamp(),  # stream time, never the wall clock
+                still_since=None if still_since is None else float(still_since),
+                port_name=str(ship.get("port_name", "")) or None,
+                in_anchorage=ship.get("zone") == ZONE_ANCHORAGE,
+            ),
+        )
+
     async def flush(self, lake: LakeSink, live: LiveSink) -> None:
         positions, statics, latest = self.take_batches()
         if not positions and not statics and not latest:
             return
+        await self.load_snapshot()
+        latest = [self._restate(row) for row in latest]
         await lake.insert_positions(positions)
         await lake.insert_static(statics)
         await lake.insert_latest(latest)
@@ -207,7 +300,8 @@ async def consume(
 
 
 async def run(settings: Settings) -> None:
-    refinery = Refinery(settings)
+    snapshot = SnapshotStore(settings.redis_url, settings.region_slug)
+    refinery = Refinery(settings, snapshot=snapshot)
     lake = ClickHouseWriter(
         host=settings.clickhouse_host,
         port=settings.clickhouse_port,
@@ -225,6 +319,7 @@ async def run(settings: Settings) -> None:
 
     await lake.start()
     await live.start()
+    await snapshot.start()
     await consumer.start()
     logger.info(kv("refinery_start", topic=settings.raw_topic, group=settings.refinery_group_id,
                    region=settings.region_slug, clickhouse=settings.clickhouse_host))
@@ -245,6 +340,7 @@ async def run(settings: Settings) -> None:
         with contextlib.suppress(Exception):
             await refinery.flush(lake, live)  # last batch, best effort
         await consumer.stop()
+        await snapshot.stop()
         await live.stop()
         await lake.stop()
         logger.info(kv("refinery_stop"))

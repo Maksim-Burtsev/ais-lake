@@ -188,6 +188,103 @@ async def test_static_teaches_the_token_even_when_its_position_is_a_dup() -> Non
     assert [r.ship_type for r in lake.statics] == [80]  # …and the identity row still lands
 
 
+class FakeSnapshot:
+    """The detector's Redis hash, without Redis. `fail` makes the next load raise."""
+
+    def __init__(self, ships: dict[int, dict[str, object]] | None = None) -> None:
+        self.ships = ships or {}
+        self.fail = False
+
+    async def load(self) -> dict[str, str]:
+        if self.fail:
+            raise ConnectionError("redis down")
+        return {str(mmsi): json.dumps(state) for mmsi, state in self.ships.items()}
+
+
+def ship_state(motion: str, still_since: datetime | None = None, port_name: str = "",
+               zone: str = "") -> dict[str, object]:
+    return {"motion": motion, "port_name": port_name, "zone": zone,
+            "still_since": None if still_since is None else int(still_since.timestamp())}
+
+
+async def flush_one(refinery: Refinery) -> LatestRow:
+    lake, live = FakeLake(), FakeLive()
+    await refinery.flush(lake, live)
+    assert len(lake.latest) == 1 and lake.latest == live.published  # CH and Redis agree
+    return lake.latest[0]
+
+
+@pytest.mark.parametrize(
+    "state,state_wire,sentence",
+    [
+        (ship_state("moored", T0 - timedelta(hours=3), "Rotterdam", "berth"),
+         "moored", "Moored in Rotterdam — 3 hours"),
+        (ship_state("anchored", T0 - timedelta(hours=14), "Rotterdam", "anchorage"),
+         "anchored", "Waiting off Rotterdam — 14 hours"),
+        (ship_state("anchored", T0 - timedelta(hours=14)),
+         "anchored", "At anchor — 14 hours"),
+        (ship_state("stopped", T0 - timedelta(minutes=8)), "underway", "Stopped"),
+        (ship_state("underway"), "underway", "Under way at 8.0 kn"),
+    ],
+)
+async def test_detector_snapshot_writes_state_and_sentence(
+    state: dict[str, object], state_wire: str, sentence: str
+) -> None:
+    """nav_status says 5 (moored) on every one of these — the detector overrules it."""
+    refinery = Refinery(Settings(_env_file=None), clock=lambda: 0.0,
+                        snapshot=FakeSnapshot({244660000: state}))
+    refinery.handle_parsed(Parsed(position=row(nav_status=5)))
+    latest = await flush_one(refinery)
+    assert (latest.state, latest.sentence) == (state_wire, sentence)
+
+
+async def test_ship_absent_from_snapshot_keeps_the_v0_heuristic() -> None:
+    refinery = Refinery(Settings(_env_file=None), clock=lambda: 0.0,
+                        snapshot=FakeSnapshot({999: ship_state("moored")}))
+    refinery.handle_parsed(Parsed(position=row(nav_status=1, sog=0.1)))
+    latest = await flush_one(refinery)
+    assert (latest.state, latest.sentence) == ("anchored", "At anchor")
+
+
+async def test_no_snapshot_source_keeps_the_v0_heuristic() -> None:
+    refinery = Refinery(Settings(_env_file=None), clock=lambda: 0.0)
+    refinery.handle_parsed(Parsed(position=row(nav_status=5, sog=0.0)))
+    latest = await flush_one(refinery)
+    assert (latest.state, latest.sentence) == ("moored", "Moored")
+
+
+async def test_stale_snapshot_falls_back_and_logs_once(
+    caplog: pytest.LogCaptureFixture
+) -> None:
+    now = 0.0
+    snapshot = FakeSnapshot({244660000: ship_state("moored", T0 - timedelta(hours=3),
+                                                   "Rotterdam", "berth")})
+    refinery = Refinery(Settings(_env_file=None), clock=lambda: now,
+                        snapshot=snapshot)
+
+    refinery.handle_parsed(Parsed(position=row(nav_status=0)))
+    assert (await flush_one(refinery)).sentence == "Moored in Rotterdam — 3 hours"
+
+    snapshot.fail = True  # Redis goes away; the last load still carries us
+    now = 60.0
+    refinery.handle_parsed(Parsed(position=row(nav_status=0, ts=T0 + timedelta(minutes=1))))
+    assert (await flush_one(refinery)).state == "moored"
+
+    now = 500.0  # …until it is older than SNAPSHOT_MAX_AGE_S
+    with caplog.at_level("INFO", logger="refinery"):
+        refinery.handle_parsed(Parsed(position=row(nav_status=0, ts=T0 + timedelta(minutes=2))))
+        latest = await flush_one(refinery)
+        assert (latest.state, latest.sentence) == ("underway", "Under way at 8.0 kn")
+
+        snapshot.fail = False  # and back again, once
+        refinery.handle_parsed(Parsed(position=row(nav_status=0, ts=T0 + timedelta(minutes=3))))
+        assert (await flush_one(refinery)).state == "moored"
+
+    events = [r.getMessage().split()[0] for r in caplog.records]
+    assert events.count("event=detector_snapshot_lost") == 1
+    assert events.count("event=detector_snapshot_back") == 1
+
+
 async def test_one_latest_row_per_ship_per_flush() -> None:
     refinery = Refinery(Settings(_env_file=None), clock=lambda: 0.0)
     for step in range(3):  # 0.001 deg every 10 s — about 22 kn, no teleport

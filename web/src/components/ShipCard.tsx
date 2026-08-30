@@ -15,12 +15,14 @@
  *
  *  Gaps, both deliberate: the frame's "· a 17-ship queue awaits" needs port queue
  *  numbers (F19, M5), so the destination and ETA are shown as reported facts
- *  instead of a sentence nobody can back up; ☆ (F24, M6) and "Follow the story →"
- *  (F12, M4) are drawn and disabled rather than wired to something that is not there.
+ *  instead of a sentence nobody can back up; ☆ (F24, M6) is drawn and disabled
+ *  rather than wired to something that is not there. "Follow the story →" is live
+ *  and goes to the server-rendered /ship/{slug}-{mmsi} (F12).
  */
 
 import { useEffect, useState } from 'react';
 import { useUrlStore } from '../state/url';
+import { shipPath } from './StoryPage';
 
 interface Card {
   mmsi: number;
@@ -225,18 +227,18 @@ function Panel({ mmsi }: { mmsi: number }) {
       </div>
 
       <div className="mt-[17px] flex gap-[9px] max-[391px]:mt-[16px] max-[391px]:gap-[10px]">
-        <button
-          type="button"
-          disabled
-          aria-label="Follow the story — the vessel story page is not built yet"
-          className="flex h-[38px] flex-1 cursor-default items-center justify-center border-0 text-[13.5px] font-semibold opacity-55 max-[391px]:h-[46px] max-[391px]:text-[14.5px]"
+        {/* A real link, not a router push: /ship/{slug}-{mmsi} is server-rendered
+            (api/app/ssr.py) so the page is shareable and readable without us. */}
+        <a
+          href={shipPath(id?.name, mmsi)}
+          className="flex h-[38px] flex-1 items-center justify-center border-0 text-[13.5px] font-semibold no-underline max-[391px]:h-[46px] max-[391px]:text-[14.5px]"
           style={{
             background: 'var(--chrome-card-action-fill)',
             color: 'var(--chrome-card-action-ink)',
           }}
         >
           Follow the story →
-        </button>
+        </a>
         <button
           type="button"
           disabled

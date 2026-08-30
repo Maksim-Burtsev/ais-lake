@@ -16,7 +16,8 @@ import asyncpg
 import clickhouse_connect
 import redis.asyncio as redis
 from fastapi import FastAPI, HTTPException, Query, WebSocket
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from .consumer import LatestShips, consume_forever
 from .limits import clamp_interval
@@ -26,6 +27,7 @@ from .ports import PortsUnavailable, port_payload, ports_geojson
 from .regions import regions_payload
 from .search import search_payload
 from .ships import CardUnavailable, ShipNotFound, card_for
+from .ssr import DIST, og_image, ship_page
 from .status import build_status
 from .story import StoryUnavailable, story_payload
 from .track import track_payload
@@ -116,6 +118,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="ais-lake api", lifespan=lifespan)
+
+# WEB_DIST set = this process serves the built SPA the SSR page links to. Unset
+# (dev, tests) = the tags point at the Vite dev server and nothing is mounted.
+if DIST is not None:
+    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
 
 @app.get("/status.json")
@@ -213,6 +220,19 @@ async def ship_track(key: str, from_: int | None = Query(None, alias="from"),
         raise HTTPException(404, "no such ship") from exc
     except StoryUnavailable as exc:
         raise HTTPException(503, "track unavailable") from exc
+
+
+@app.get("/ship/{path}/og.png")
+async def ship_og(path: str) -> Response:
+    """F31's share card: the simplified track on the brand plate, no text."""
+    return await og_image(runtime.clickhouse, path)
+
+
+@app.get("/ship/{path}")
+async def ship_story_page(path: str) -> Response:
+    """F12/F31: the vessel page as HTML before any script runs. `path` is
+    {slug}-{mmsi}; a wrong or stale slug 301s to the canonical one."""
+    return await ship_page(runtime.clickhouse, runtime.redis, runtime.postgres, path)
 
 
 @app.websocket("/v1/live")

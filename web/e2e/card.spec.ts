@@ -151,8 +151,12 @@ test('card · tapping a ship opens it, and the tap is in the URL', async ({ page
   // the halo is a paint expression over the fleet, not a rebuilt feature.
   expect(await hullIcon(page)).toEqual(SELECTED(MMSI));
 
-  // ... and the two controls are drawn but honestly dead (F24 / F12 are not built).
-  await expect(card(page).getByRole('button', { name: /Follow the story/ })).toBeDisabled();
+  // ... the story link goes to the server-rendered vessel page (F12) ...
+  await expect(card(page).getByRole('link', { name: /Follow the story/ })).toHaveAttribute(
+    'href',
+    `/ship/northern-star-${MMSI}`,
+  );
+  // ... and the watchlist star is drawn but honestly dead (F24 is not built).
   await expect(card(page).getByRole('button', { name: /Follow this ship/ })).toBeDisabled();
 });
 

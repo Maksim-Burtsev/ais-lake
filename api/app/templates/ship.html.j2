@@ -1,0 +1,97 @@
+{#- S2 vessel page, server-rendered. Frame: docs/design "Batch 2 Vessel Page" 6a.
+    The SPA mounts into #root and replaces everything inside it, so the styling
+    here only has to carry the page until then — night palette, inline, no build. -#}
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }}</title>
+<meta name="description" content="{{ description }}">
+<link rel="canonical" href="{{ canonical }}">
+<meta property="og:type" content="article">
+<meta property="og:title" content="{{ name }}">
+<meta property="og:description" content="{{ description }}">
+<meta property="og:image" content="{{ canonical }}/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{--ink:#F6F0E3;--body:#DCE7ED;--soft:#9DB4C2;--mute:#6E8798;--rule:#1C3040;--gold:#E8B25C;--mono:#8FB4C6}
+body{margin:0;background:#0A1620;color:var(--body);font:16px/1.6 'IBM Plex Sans',sans-serif}
+a{color:inherit}
+.bar{display:flex;align-items:center;gap:20px;height:56px;padding:0 26px;border-bottom:1px solid var(--rule)}
+.logo{font-family:Fraunces,serif;font-size:21px;font-weight:500;color:#F2EADB}
+.back{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;color:var(--mute);text-decoration:none}
+.wrap{display:grid;grid-template-columns:880px 380px;gap:0 64px;padding:40px 56px 56px;max-width:1440px;box-sizing:border-box}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.16em;color:var(--mute)}
+.title{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 18px;margin-top:14px}
+h1{margin:0;font-family:Fraunces,serif;font-size:46px;font-weight:500;letter-spacing:-.01em;color:var(--ink)}
+.sub{font-size:14px;color:var(--soft)}
+.standfirst{margin:14px 0 0;font-size:16px;color:var(--body);max-width:760px;text-wrap:pretty}
+.voyage{height:420px;margin-top:26px;border:1px solid var(--rule);display:flex;align-items:center;justify-content:center;color:var(--mute);font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.16em}
+.timeline{display:flex;flex-direction:column;margin-top:36px;border-left:1px solid var(--rule)}
+.entry{display:flex;gap:20px;padding:0 0 28px}
+.dot{width:11px;height:11px;border-radius:50%;flex:none;margin-left:-6px;margin-top:5px;border:2px solid #0A1620}
+.head{display:flex;justify-content:space-between;align-items:baseline;gap:20px;max-width:720px}
+.head b{font-size:15.5px;font-weight:600;color:var(--ink)}
+.head b.silent{color:#FF8A72}
+.head time{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--mono)}
+.note{margin:6px 0 0;font-size:14px;color:var(--soft);max-width:680px;text-wrap:pretty}
+.rail{padding-top:42px}
+.rail h2{margin:0;font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:400;letter-spacing:.16em;color:var(--gold)}
+.rail dl{display:flex;flex-direction:column;margin:14px 0 0;font-family:'IBM Plex Mono',monospace;font-size:12px}
+.rail dl>div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #14242F}
+.rail dt{color:var(--mute)}.rail dd{margin:0;color:#C9DAE4;text-align:right}
+.limit{margin:16px 0 0;font-size:13px;color:var(--mute);text-wrap:pretty}
+@media (max-width:900px){.wrap{display:block;padding:18px 20px 40px}.voyage{height:210px}
+h1{font-size:26px}.sub{font-size:12.5px}.standfirst{margin-top:10px;font-size:15px}
+.head{display:block}.head b{font-size:14.5px}.head time{font-size:10.5px}}
+</style>
+</head>
+<body>
+<div id="root">
+  <header class="bar">
+    <span class="logo">ais<span style="color:#E8B25C">·</span>lake</span>
+    <a class="back" href="/">← BACK TO THE MAP</a>
+  </header>
+  <div class="wrap">
+    <main>
+      <p class="eyebrow">THE MAP → VESSEL</p>
+      <div class="title"><h1>{{ name }}</h1><span class="sub">{{ subtitle }}</span></div>
+      <p class="standfirst">{{ standfirst }}</p>
+      <div class="voyage">VOYAGE MAP</div>
+      <div class="timeline">
+        {%- for e in entries %}
+        <article class="entry">
+          <span class="dot" style="background:{{ e.dot }}"></span>
+          <div style="flex:1">
+            <div class="head">
+              <b{% if e.silent %} class="silent"{% endif %}>{{ e.prose }}</b>
+              <time>{{ e.stamp }}</time>
+            </div>
+            {%- if e.note %}<p class="note">{{ e.note }}</p>{% endif %}
+          </div>
+        </article>
+        {%- else %}
+        <p class="note">Nothing recorded for her in this window.</p>
+        {%- endfor %}
+      </div>
+    </main>
+    <aside class="rail">
+      <h2>PARTICULARS</h2>
+      <dl>
+        {%- for label, value in particulars %}
+        <div><dt>{{ label }}</dt><dd>{{ value }}</dd></div>
+        {%- endfor %}
+      </dl>
+      <p class="limit">{{ limit_line }}</p>
+      <p class="limit">Dashes mean not yet received, not unavailable.</p>
+    </aside>
+  </div>
+</div>
+<script type="application/json" id="story-data">{{ payload | safe }}</script>
+{{ assets | safe }}
+</body>
+</html>

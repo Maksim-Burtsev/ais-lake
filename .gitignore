@@ -2,7 +2,8 @@
 CLAUDE.md
 docs/
 prompts/
-templates/
+# anchored: the ROOT kit dir only. api/app/templates/ is shipped code.
+/templates/
 README.kit.md
 
 # --- secrets ---

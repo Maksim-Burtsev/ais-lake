@@ -64,6 +64,8 @@ def _nowhere(lat: float, lon: float) -> PortHit | None:
 
 SOG_NA = 102.3  # AIS spells "speed not available" as 102.3 kn
 DRAUGHT_NA = 0.0  # …and "draught not declared" as zero
+# AIS carries draught in decimetres, so equality between two readings is 0.1 m.
+DRAUGHT_FLIP_TOL = 0.1
 
 # What we say when no coverage model has answered: we do not know why she went
 # quiet. With a model loaded, coverage.py replaces the word (F13).
@@ -114,6 +116,11 @@ class ShipState:
     still_since: datetime | None = None
     moving_since: datetime | None = None
     draught: float | None = None
+    # The draught she held *before* the one she holds now, and when that change
+    # was written — only set when it produced an event. Together they are all
+    # the history the flip-back rule needs (_on_draught).
+    draught_prev: float | None = None
+    draught_event_ts: datetime | None = None
     anchorage_id: str | None = None
     gap_id: str | None = None
     # Where the current stop is, decided once when it opened: the port's
@@ -147,6 +154,8 @@ class ShipState:
                 "still_since": _epoch(self.still_since),
                 "moving_since": _epoch(self.moving_since),
                 "draught": self.draught,
+                "draught_prev": self.draught_prev,
+                "draught_event_ts": _epoch(self.draught_event_ts),
                 "anchorage_id": self.anchorage_id,
                 "gap_id": self.gap_id,
                 "port": self.port,
@@ -173,6 +182,10 @@ class ShipState:
             still_since=_when(d["still_since"]),
             moving_since=_when(d["moving_since"]),
             draught=d["draught"],
+            # .get: snapshots written before the flip-back rule have neither —
+            # the ship simply gets one free move before history exists again.
+            draught_prev=d.get("draught_prev"),
+            draught_event_ts=_when(d.get("draught_event_ts")),
             anchorage_id=d["anchorage_id"],
             gap_id=d["gap_id"],
             # .get: snapshots written before the ports landed have neither.
@@ -205,6 +218,7 @@ class Detector:
         self._anchor_min = timedelta(seconds=settings.anchor_min_s)
         self._silent_after = timedelta(seconds=SILENT_AFTER_S)
         self._draught_delta = settings.draught_min_delta_m
+        self._draught_flip_window = timedelta(seconds=settings.draught_flip_window_s)
         self._mmsi_min = settings.mmsi_min
         self._mmsi_max = settings.mmsi_max
         # ponytail: ships are never evicted, so the map's 48 h age cut does not
@@ -367,7 +381,7 @@ class Detector:
         record. What she loaded, and how much, is in neither the message nor
         this event: only the two numbers and the difference between them.
         """
-        # ponytail: the reading is taken at face value, and some of them are junk.
+        # The reading is taken at face value, and some of them are junk.
         # Measured on the first live run: NIETS BESTENDIG, 25 m long, reports 13.2 m
         # of draught and flips back to 1.2 m and round again; KRAICHGAU 2, 86 m,
         # does the same between 17.5 and 1.2. Six events of 1,228 are physically
@@ -376,15 +390,45 @@ class Detector:
         # hulls are genuinely that deep), so a ratio bound tight enough to reject
         # 13.2 m on a 25 m boat throws out a tenth of the honest fleet, and one
         # loose enough to keep them misses the 86 m barge. What marks both is that
-        # the value OSCILLATES — a retyped field, not moved cargo — and telling
-        # that apart needs history and a rule. Nothing renders these until M4, and
-        # M3-T3's spot-check against 20 labelled voyages is where it belongs.
+        # the value OSCILLATES — a retyped field, not moved cargo.
+        #
+        # M3-T3 measured the oscillation on the lake (1,154 distinct load_delta
+        # events, 886 ships, 48 h). "The new value returns to the one before last,
+        # ±0.1 m" marks 153 of them (13.3%) across 58 ships — too many to trust
+        # on its own, because a barge really can load and discharge in a day. Time
+        # separates the two: flip-backs bunch at the short end (67% inside an hour)
+        # while the ordinary gap between two draught changes has its median at 5 h.
+        # Bounded to an hour the rule marks 103 events (8.9%), 90 of them one
+        # transmitter (244179000, flipping 0.8 m every ~15 min); the rest is 19
+        # events over 18 ships, 1.6%. It catches NIETS BESTENDIG's flip (18 min
+        # apart). It does NOT catch KRAICHGAU 2, whose 17.5 m was the first reading
+        # we ever held for her — no history, no rule; a seed value is uncatchable.
+        # Nothing loads and discharges inside an hour, so the false-mark cost is
+        # taken to be the honest zero it looks like.
+        #
+        # ponytail: suppression, not annotation. The events table is write-once, so
+        # marking the middle event suspect after the fact is not on offer, and a
+        # suspect=true on the flip alone would be a flag no screen reads before M4.
+        # The reading still lands in ship.draught — only the event is withheld.
+        # Upgrade path, if M4 wants the audit trail: emit with meta.suspect and let
+        # the reader filter.
         draught = static.draught
         if draught <= DRAUGHT_NA:
             return
         was, ship.draught = ship.draught, draught
         if was is None or abs(draught - was) < self._draught_delta:
             return
+        if (
+            ship.draught_prev is not None
+            and ship.draught_event_ts is not None
+            and abs(draught - ship.draught_prev) <= DRAUGHT_FLIP_TOL
+            and static.ts - ship.draught_event_ts <= self._draught_flip_window
+        ):
+            # She went there and came straight back. Forget the pair rather than
+            # judging the next move against a value we no longer believe.
+            ship.draught_prev = ship.draught_event_ts = None
+            return
+        ship.draught_prev, ship.draught_event_ts = was, static.ts
         self._emit(
             KIND_LOAD_DELTA,
             ship.mmsi,

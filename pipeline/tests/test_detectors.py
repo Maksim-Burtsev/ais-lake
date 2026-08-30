@@ -229,6 +229,64 @@ def test_only_a_draught_change_worth_the_name_is_reported() -> None:
     assert event.t_start == event.t_end == T0 + timedelta(minutes=20)
 
 
+def test_a_draught_that_flips_straight_back_is_a_retyped_field() -> None:
+    """1.2 -> 13.2 -> 1.2 inside the hour: NIETS BESTENDIG, not moved cargo."""
+    d = det()
+    d.handle_parsed(static(0, 1.2))
+    d.handle_parsed(static(10, 13.2))   # the deepening is reported…
+    d.handle_parsed(static(28, 1.2))    # …and the return withdraws nothing, adds nothing
+
+    events = d.take_events()
+    assert [e.meta["to"] for e in events] == [13.2]
+    # The reading still lands — only the event was withheld.
+    assert d.ships[MMSI].draught == 1.2
+
+
+def test_a_flip_back_costs_the_ship_no_later_events() -> None:
+    d = det()
+    d.handle_parsed(static(0, 1.2))
+    d.handle_parsed(static(10, 13.2))
+    d.handle_parsed(static(28, 1.2))    # suppressed
+    d.handle_parsed(static(40, 6.0))    # the next honest move is still reported
+
+    assert [e.meta["to"] for e in d.take_events()] == [13.2, 6.0]
+
+
+def test_a_ship_that_keeps_going_deeper_is_never_flipping() -> None:
+    d = det()
+    d.handle_parsed(static(0, 2.0))
+    d.handle_parsed(static(10, 5.0))
+    d.handle_parsed(static(20, 8.0))    # A -> B -> C: three events' worth of loading
+
+    assert [e.meta["to"] for e in d.take_events()] == [5.0, 8.0]
+
+
+def test_a_round_trip_slower_than_the_window_is_cargo_again() -> None:
+    """Measured on the lake: flip-backs bunch inside the hour, real changes do not.
+
+    The median gap between two draught changes is five hours, so a return that
+    takes longer than the window is read as a discharge, not a typo.
+    """
+    d = det()
+    d.handle_parsed(static(0, 2.0))
+    d.handle_parsed(static(10, 8.0))
+    d.handle_parsed(static(10 + 61, 2.0))   # an hour and a minute later
+
+    assert [e.meta["to"] for e in d.take_events()] == [8.0, 2.0]
+
+
+def test_a_snapshot_carries_the_flip_back_history() -> None:
+    d = det()
+    d.handle_parsed(static(0, 1.2))
+    d.handle_parsed(static(10, 13.2))
+    d.take_events()
+
+    revived = ShipState.from_json(d.ships[MMSI].to_json())
+    assert (revived.draught_prev, revived.draught_event_ts) == (
+        1.2, T0 + timedelta(minutes=10),
+    )
+
+
 def test_a_static_report_is_not_a_ship_standing_still() -> None:
     """A type 5 carries no speed and the parser gives its position sog 0.0.
 

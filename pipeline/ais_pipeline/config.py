@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     anchor_min_s: int = 30 * 60
     # AIS reports draught to 0.1 m, so 0.3 clears the reporting noise.
     draught_min_delta_m: float = 0.3
+    # A draught that goes back to where it was inside this window is a retyped
+    # field, not a round trip of cargo — no hull loads and discharges in an
+    # hour (detectors/machine.py::_on_draught argues it with numbers).
+    draught_flip_window_s: int = 60 * 60
     snapshot_interval_s: float = 30.0
 
     # --- offline seed (Danish Maritime Authority daily dumps) ---

@@ -14,7 +14,9 @@
  *  Gaps, deliberate: the replay scrubber is step 4, so the voyage box draws the
  *  track as a static SVG polyline rather than a MapLibre canvas — it shows the
  *  shape of the passage, which is what the frame's box is for, at no map cost.
- *  ☆ (F24) and "Watch her live" are drawn per frame and inert until M6.
+ *  The rail foot is frame 6a's: "Watch her live →" is still inert (M6), the ☆
+ *  keeps three ships in localStorage (F24 stub), and under them F17's two file
+ *  links and F18's copy-the-link sit as frame 10b's pills.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -104,6 +106,89 @@ const embedded = (): { card: Card; story: Story } | null => {
 };
 
 const mmsiFromPath = (): string => /-(\d{9})$/.exec(location.pathname)?.[1] ?? '';
+
+/** F24 stub — three ships, this device, no account. # F24 M6 sync */
+const FOLLOW_KEY = 'follows';
+const follows = (): number[] => {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(FOLLOW_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw.filter((v) => typeof v === 'number') : [];
+  } catch {
+    return []; // storage blocked or junk == follows nothing, same as WelcomeToast
+  }
+};
+export const FOLLOW_CAP = 3;
+
+/** frame 6a's rail foot — the amber CTA and the star — plus F17/F18's row under
+ *  it: the two files the browser downloads itself (Content-Disposition names
+ *  them) and the link to this exact moment, ?t= and all. */
+function RailFoot({ mmsi }: { mmsi: number }) {
+  const [followed, setFollowed] = useState(() => follows().includes(mmsi));
+  const [toast, setToast] = useState<string | null>(null);
+
+  const toggle = () => {
+    const next = followed ? follows().filter((m) => m !== mmsi) : [...follows(), mmsi];
+    if (next.length > FOLLOW_CAP) {
+      setToast('Three ships is the limit while you are a guest.');
+      return;
+    }
+    try {
+      localStorage.setItem(FOLLOW_KEY, JSON.stringify(next));
+    } catch {
+      /* unwritable storage: the star still flips for this visit */
+    }
+    setFollowed(!followed);
+  };
+
+  const share = () => {
+    navigator.clipboard
+      .writeText(location.href)
+      .then(() => setToast('Link copied — it opens right here, at this moment.'))
+      .catch(() => setToast('Could not copy the link — the address bar has it.'));
+  };
+
+  const pill =
+    'flex h-[32px] items-center border border-[var(--chrome-hairline)] bg-transparent px-[14px] text-[13px] text-[var(--chrome-card-particulars)] no-underline cursor-pointer';
+
+  return (
+    <>
+      <div className="mt-[26px] flex gap-[10px]">
+        <a
+          href="/"
+          className="flex h-[42px] flex-1 items-center justify-center bg-[var(--chrome-logo-dot)] text-[14px] font-semibold text-[var(--page)] no-underline"
+        >
+          Watch her live →
+        </a>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-pressed={followed}
+          aria-label={followed ? 'Stop following her' : 'Follow her'}
+          data-testid="follow"
+          className="flex h-[42px] w-[42px] cursor-pointer items-center justify-center border border-[var(--chrome-hairline)] bg-transparent text-[16px] text-[var(--chrome-card-sub)]"
+        >
+          {followed ? '★' : '☆'}
+        </button>
+      </div>
+      <div className="mt-[10px] flex flex-wrap gap-[8px]">
+        <a className={pill} href={`/v1/ships/${mmsi}/track.csv`} data-testid="dl-csv">
+          CSV
+        </a>
+        <a className={pill} href={`/v1/ships/${mmsi}/track.geojson`} data-testid="dl-geojson">
+          GeoJSON
+        </a>
+        <button type="button" className={pill} onClick={share} data-testid="share">
+          Copy link
+        </button>
+      </div>
+      {toast ? (
+        <p role="status" className="mt-[10px] mb-0 text-[13px] text-[var(--chrome-card-age)]">
+          {toast}
+        </p>
+      ) : null}
+    </>
+  );
+}
 
 function Particulars({ mmsi, id }: { mmsi: number; id: Identity | undefined }) {
   const rows: [string, string][] = [
@@ -314,6 +399,7 @@ export function StoryPage() {
             Dashes mean not yet received, not unavailable. The flag is inferred from the MMSI
             prefix, which is why it is the one field that fills in first.
           </p>
+          {mmsi ? <RailFoot mmsi={mmsi} /> : null}
         </aside>
       </div>
         )}

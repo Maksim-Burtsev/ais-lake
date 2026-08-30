@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .consumer import LatestShips, consume_forever
+from .download import download
 from .limits import clamp_interval
 from .live import Deltas, live_socket, subscribe_forever
 from .map import SnapshotUnavailable, parse_bbox, snapshot_payload
@@ -220,6 +221,24 @@ async def ship_track(key: str, from_: int | None = Query(None, alias="from"),
         raise HTTPException(404, "no such ship") from exc
     except StoryUnavailable as exc:
         raise HTTPException(503, "track unavailable") from exc
+
+
+@app.get("/v1/ships/{key}/track.{fmt}")
+async def ship_track_file(key: str, fmt: str, from_: int | None = Query(None, alias="from"),
+                          to: int | None = None) -> Response:
+    """F17: the visible window as a file, clamped to the download window. The
+    attachment is named `{name}-{imo}-{from}-{to}` — see download.py."""
+    if fmt not in ("csv", "geojson"):
+        raise HTTPException(404, "no such format")
+    try:
+        body, media, filename = await download(runtime.clickhouse, runtime.redis, key, fmt, from_,
+                                               to)
+    except ShipNotFound as exc:
+        raise HTTPException(404, "no such ship") from exc
+    except (CardUnavailable, StoryUnavailable) as exc:
+        raise HTTPException(503, "download unavailable") from exc
+    return Response(body, media_type=media,
+                    headers={"content-disposition": f'attachment; filename="{filename}"'})
 
 
 @app.get("/ship/{path}/og.png")

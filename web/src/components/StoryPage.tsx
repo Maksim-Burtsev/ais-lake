@@ -18,6 +18,8 @@
  */
 
 import { useEffect, useState } from 'react';
+import { GapView, type GapNumbers } from './GapView';
+import { useUrlStore } from '../state/url';
 
 const DASH = '—';
 
@@ -45,6 +47,8 @@ interface Event {
   prose: string;
   port: { locode: string; name: string | null } | null;
   flag?: { label: string };
+  /** F13 — present on every gap; the numbers the opened view shows. */
+  numbers?: GapNumbers;
 }
 interface Story {
   mmsi: number;
@@ -212,6 +216,11 @@ export function StoryPage() {
   const subtitle = [id?.class ?? DASH, id?.flag ?? DASH, id?.size_m ? `${id.size_m} m` : DASH].join(
     ' · ',
   );
+  // F13: ?gap=<event_id> opens that silence in place of the timeline. An id that
+  // matches nothing (an old link, a typo) simply leaves the timeline standing.
+  const gapId = useUrlStore((s) => s.gap);
+  const patch = useUrlStore((s) => s.patch);
+  const opened = story?.events.find((e) => e.kind === 'gap' && e.event_id === gapId);
 
   return (
     <div className="min-h-screen bg-[var(--page)] text-[var(--chrome-card-sentence)]">
@@ -227,7 +236,15 @@ export function StoryPage() {
         </a>
       </header>
 
-      <div className="grid grid-cols-[880px_380px] gap-x-[64px] px-[56px] pt-[40px] pb-[56px] max-[900px]:block max-[900px]:px-[20px] max-[900px]:pt-[18px]">
+      <div className="px-[56px] pt-[40px] pb-[56px] max-[900px]:px-[20px] max-[900px]:pt-[18px]">
+        {opened ? (
+          <GapView
+            event={opened}
+            ship={id?.name ?? 'This ship'}
+            onBack={() => patch({ gap: undefined })}
+          />
+        ) : (
+      <div className="grid grid-cols-[880px_380px] gap-x-[64px] max-[900px]:block">
         <main>
           <p className="m-0 font-mono text-[11px] tracking-[0.16em] text-[var(--chrome-card-age)]">
             THE MAP → VESSEL
@@ -277,9 +294,26 @@ export function StoryPage() {
                   </div>
                   {/* the only line beside the prose: the gap detector's label. The
                       port is already IN the sentence, so repeating it says nothing. */}
-                  {event.flag?.label ? (
-                    <p className="mt-[6px] mb-0 max-w-[680px] text-[14px] text-[var(--chrome-card-sub)] [text-wrap:pretty]">
-                      {event.flag.label}
+                  {/* F13: the flagged silence says so and invites the numbers;
+                      an ordinary gap gets the same door, quietly. */}
+                  {event.kind === 'gap' ? (
+                    <p className="mt-[6px] mb-0 flex max-w-[680px] flex-wrap items-baseline gap-x-[10px] text-[14px] text-[var(--chrome-card-sub)]">
+                      {event.flag?.label ? <span>{event.flag.label}</span> : null}
+                      <a
+                        href={`?gap=${event.event_id}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          patch({ gap: event.event_id });
+                        }}
+                        className="text-[13px] no-underline"
+                        style={{
+                          color: event.flag
+                            ? 'var(--chrome-search-silent)'
+                            : 'var(--chrome-card-age)',
+                        }}
+                      >
+                        See what else was nearby →
+                      </a>
                     </p>
                   ) : null}
                 </div>
@@ -306,6 +340,8 @@ export function StoryPage() {
             prefix, which is why it is the one field that fills in first.
           </p>
         </aside>
+      </div>
+        )}
       </div>
     </div>
   );

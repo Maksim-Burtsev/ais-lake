@@ -151,7 +151,7 @@ def prose_for(kind: str, name: str | None, meta: dict[str, Any], dur: str | None
     return kind.replace("_", " ").capitalize()  # a kind added to the enum, not yet to the voice
 
 
-# The numbers behind an unusual gap: shown in the expander, never in the sentence.
+# The numbers behind a gap: shown in the opened-silence view, never in the sentence.
 FLAG_KEYS = (
     "confidence",
     "cell_interval_s",
@@ -159,6 +159,7 @@ FLAG_KEYS = (
     "cell_ships",
     "neighbors_online",
 )
+NUMBER_KEYS = ("classification", *FLAG_KEYS)
 
 
 def _flag(kind: str, meta: dict[str, Any]) -> dict[str, Any] | None:
@@ -167,6 +168,14 @@ def _flag(kind: str, meta: dict[str, Any]) -> dict[str, Any] | None:
     flag: dict[str, Any] = {"label": "Unusual for this area"}
     flag.update({k: meta[k] for k in FLAG_KEYS if k in meta})
     return flag
+
+
+def _numbers(kind: str, meta: dict[str, Any]) -> dict[str, Any] | None:
+    """Every gap's evidence, flagged or not (F13): the gap view IS the expander,
+    so an ordinary silence must be able to show why it is ordinary."""
+    if kind != "gap":
+        return None
+    return {k: meta[k] for k in NUMBER_KEYS if k in meta}
 
 
 async def story_payload(
@@ -202,6 +211,7 @@ async def story_payload(
                 "prose": prose_for(kind, name, meta, _duration(meta, start, end)),
                 "port": {"locode": port, "name": name} if port else None,
                 **({"flag": flag} if (flag := _flag(kind, meta)) else {}),
+                **({"numbers": numbers} if (numbers := _numbers(kind, meta)) is not None else {}),
             }
         )
 

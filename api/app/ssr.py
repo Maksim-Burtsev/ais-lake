@@ -163,6 +163,9 @@ def render(card: dict[str, Any], story: dict[str, Any]) -> str:
                 # port is already IN the sentence, so repeating it says nothing.
                 "note": (e.get("flag") or {}).get("label"),
                 "silent": e["kind"] == "gap",
+                # F13: the door into the opened silence, in the markup before any
+                # script runs — the SPA takes the same href over.
+                "gap": f"?gap={e['event_id']}" if e["kind"] == "gap" else None,
             }
             for e in events
         ],

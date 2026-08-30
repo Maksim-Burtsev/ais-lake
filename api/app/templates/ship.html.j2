@@ -39,6 +39,8 @@ h1{margin:0;font-family:Fraunces,serif;font-size:46px;font-weight:500;letter-spa
 .head b.silent{color:#FF8A72}
 .head time{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--mono)}
 .note{margin:6px 0 0;font-size:14px;color:var(--soft);max-width:680px;text-wrap:pretty}
+.gap{font-size:13px;color:var(--mono);text-decoration:none;margin-left:4px}
+.gap.flagged{color:#FF8A72}
 .rail{padding-top:42px}
 .rail h2{margin:0;font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:400;letter-spacing:.16em;color:var(--gold)}
 .rail dl{display:flex;flex-direction:column;margin:14px 0 0;font-family:'IBM Plex Mono',monospace;font-size:12px}
@@ -71,7 +73,8 @@ h1{font-size:26px}.sub{font-size:12.5px}.standfirst{margin-top:10px;font-size:15
               <b{% if e.silent %} class="silent"{% endif %}>{{ e.prose }}</b>
               <time>{{ e.stamp }}</time>
             </div>
-            {%- if e.note %}<p class="note">{{ e.note }}</p>{% endif %}
+            {%- if e.gap %}<p class="note">{% if e.note %}{{ e.note }} {% endif %}<a class="gap{% if e.note %} flagged{% endif %}" href="{{ e.gap }}">See what else was nearby →</a></p>
+            {%- elif e.note %}<p class="note">{{ e.note }}</p>{% endif %}
           </div>
         </article>
         {%- else %}

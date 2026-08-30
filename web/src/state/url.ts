@@ -27,6 +27,8 @@ export interface UrlState {
   filter?: VesselFilter;
   /** F8/F10 — the tapped ship's MMSI. Absent = nothing selected, no card. */
   selection?: number;
+  /** F13 — the opened silence: a gap event_id. Absent = the timeline. */
+  gap?: string;
 }
 
 /** Launch region. The frames say "Black Sea" — illustrative; launch is the
@@ -87,6 +89,13 @@ export const PARAMS: Params = {
     // a reason for the map to fail to boot.
     parse: (raw) => (/^\d{9}$/.test(raw) ? Number(raw) : undefined),
     serialize: (value) => (value === undefined ? null : String(value)),
+  },
+  gap: {
+    param: 'gap',
+    // An event_id, not free text: anything else in the address bar is a typo and
+    // the page stays on the timeline rather than hunting for a gap that is not there.
+    parse: (raw) => (/^[\w-]{1,64}$/.test(raw) ? raw : undefined),
+    serialize: (value) => value ?? null,
   },
   filter: {
     param: 'f',

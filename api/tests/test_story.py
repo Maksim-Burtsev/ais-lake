@@ -123,13 +123,31 @@ async def test_unusual_gap_flags_but_never_says_so() -> None:
         "cell_ships": 41,
         "neighbors_online": 12,
     }
+    assert ev["numbers"] == {
+        "classification": "unusual",
+        "confidence": 0.82,
+        "cell_ships": 41,
+        "neighbors_online": 12,
+    }
 
 
 @pytest.mark.asyncio
-async def test_ordinary_gap_carries_no_flag() -> None:
-    row = event("gap", "", {"duration_s": 26 * 3600, "classification": "expected"})
-    payload = await story_payload(FakeClickHouse([row]), ROTTERDAM, str(MMSI), now=NOW)
-    assert "flag" not in payload["events"][0]
+async def test_ordinary_gap_carries_numbers_but_no_flag() -> None:
+    """F13: the gap view is the expander, so every silence carries its evidence."""
+    row = event(
+        "gap", "", {"duration_s": 26 * 3600, "classification": "expected", "cell_occupancy": 0.4}
+    )
+    ev = (await story_payload(FakeClickHouse([row]), ROTTERDAM, str(MMSI), now=NOW))["events"][0]
+    assert "flag" not in ev
+    assert ev["numbers"] == {"classification": "expected", "cell_occupancy": 0.4}
+
+
+@pytest.mark.asyncio
+async def test_only_gaps_carry_numbers() -> None:
+    row = event("port_call", "NLRTM", {"duration_s": DAY_S, "classification": "unusual"})
+    assert "numbers" not in (
+        await story_payload(FakeClickHouse([row]), ROTTERDAM, str(MMSI), now=NOW)
+    )["events"][0]
 
 
 @pytest.mark.asyncio
